@@ -88,6 +88,8 @@ call venv\Scripts\activate.bat
 
 REM ---- Install dependencies ----
 echo [2/4] Installing dependencies (first run may take a few minutes)...
+python -m pip install --upgrade pip --quiet
+python -m pip install torch torchvision torchaudio --extra-index-url https://download.pytorch.org/whl/cu128 --quiet
 python -m pip install -r requirements.txt --quiet
 python -m pip install -r lora-studio\requirements.txt --quiet
 
