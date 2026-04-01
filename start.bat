@@ -18,8 +18,7 @@ if errorlevel 1 (
     echo   Or install via winget:
     echo     winget install Python.Python.3.12
     echo.
-    pause
-    exit /b 1
+    goto :done
 )
 echo [OK] Python found
 
@@ -66,8 +65,7 @@ if not exist "venv" (
     python -m venv venv
     if errorlevel 1 (
         echo [ERROR] Failed to create venv.
-        pause
-        exit /b 1
+        goto :done
     )
 )
 call venv\Scripts\activate.bat
@@ -108,4 +106,7 @@ echo.
 cd lora-studio
 python server.py
 
-pause
+:done
+echo.
+echo Press any key to close...
+pause >nul
