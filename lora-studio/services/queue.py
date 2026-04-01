@@ -331,6 +331,8 @@ def _process_job(job: dict) -> None:
 
                 _update_job_message(job_id, "Generating song...")
 
+                # Since GPT already provides full caption/lyrics/BPM/key,
+                # skip the local LLM "thinking" step — saves ~3GB VRAM
                 gen_params = GenerationParams(
                     task_type=task_type,
                     src_audio=src_audio,
@@ -343,7 +345,7 @@ def _process_job(job: dict) -> None:
                     vocal_language="en",
                     inference_steps=8,
                     guidance_scale=9.0,
-                    thinking=True,
+                    thinking=False,
                 )
                 config = GenerationConfig(batch_size=1, use_random_seed=True, audio_format="mp3")
                 result = generate_music(
@@ -410,7 +412,7 @@ def _process_remix_job(job_id, params, lora_name, strength, output_dir, draft_di
             vocal_language="en",
             inference_steps=8,
             guidance_scale=9.0,
-            thinking=True,
+            thinking=False,
         )
         config = GenerationConfig(batch_size=1, use_random_seed=True, audio_format="mp3")
         result = generate_music(

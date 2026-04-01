@@ -36,16 +36,23 @@ def _ensure_models():
             device="auto",
             offload_to_cpu=True,
         )
+    # LLM is optional — GPT handles caption/lyrics/BPM planning via the AI builder.
+    # Skip loading the 1.7B local LLM to save ~3GB VRAM (critical for 6-8GB cards).
+    # If thinking=False in generation params, the LLM isn't used anyway.
     if _llm is None:
-        from acestep.llm_inference import LLMHandler
-        _llm = LLMHandler()
-        _llm.initialize(
-            checkpoint_dir=str(CHECKPOINT_DIR),
-            lm_model_path="acestep-5Hz-lm-1.7B",
-            backend="pt",
-            device="auto",
-            offload_to_cpu=True,
-        )
+        try:
+            from acestep.llm_inference import LLMHandler
+            _llm = LLMHandler()
+            _llm.initialize(
+                checkpoint_dir=str(CHECKPOINT_DIR),
+                lm_model_path="acestep-5Hz-lm-1.7B",
+                backend="pt",
+                device="auto",
+                offload_to_cpu=True,
+            )
+        except Exception as e:
+            print(f"  [Models] LLM skipped (not critical): {e}", flush=True)
+            _llm = None
 
 
 def _download_models_if_needed():
