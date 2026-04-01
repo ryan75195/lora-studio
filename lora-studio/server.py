@@ -57,15 +57,26 @@ async def health():
 
 # --- Startup ---
 
+_model_status = {"ready": False, "message": "Starting..."}
+
+
+@app.get("/api/model-status")
+async def model_status():
+    return _model_status
+
+
 @app.on_event("startup")
 async def warmup_models():
     _queue.recover_on_startup()
 
     def _warmup():
+        _model_status["message"] = "Downloading models (first run only)..."
         print("  Warming up models...", flush=True)
+        _model_status["message"] = "Loading AI models into GPU..."
         _models._ensure_models()
+        _model_status["ready"] = True
+        _model_status["message"] = "Ready!"
         print("  Models ready!", flush=True)
-        # Resume interrupted training after models are ready
         from routes.training import resume_training_if_pending
         resume_training_if_pending()
     threading.Thread(target=_warmup, daemon=True).start()
