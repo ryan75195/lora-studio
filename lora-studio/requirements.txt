@@ -1,0 +1,9 @@
+# LoRA Studio additional dependencies (on top of ACE-Step's requirements.txt)
+python-dotenv>=1.0.0
+demucs>=4.0.0
+soundfile>=0.13.1
+Pillow>=10.0.0
+google-auth-oauthlib>=1.0.0
+google-api-python-client>=2.0.0
+yt-dlp>=2024.0.0
+openai>=1.0.0
