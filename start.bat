@@ -2,6 +2,22 @@
 title LoRA Studio
 cd /d "%~dp0"
 
+REM Log everything to file
+set LOGFILE=%~dp0lora-studio.log
+echo. > "%LOGFILE%"
+echo LoRA Studio started at %date% %time% >> "%LOGFILE%"
+call :main >> "%LOGFILE%" 2>&1
+echo.
+echo ============================================
+echo   Server stopped.
+echo   Log saved to: %LOGFILE%
+echo ============================================
+echo.
+echo Press any key to close...
+pause >nul
+exit /b
+
+:main
 echo ============================================
 echo   LoRA Studio Launcher
 echo ============================================
@@ -15,10 +31,7 @@ if errorlevel 1 (
     echo   Please install Python 3.10+ from https://python.org
     echo   Make sure to check "Add Python to PATH" during install.
     echo.
-    echo   Or install via winget:
-    echo     winget install Python.Python.3.12
-    echo.
-    goto :done
+    exit /b 1
 )
 echo [OK] Python found
 
@@ -34,8 +47,6 @@ if errorlevel 1 (
         echo     https://ffmpeg.org/download.html
         echo     Or: winget install Gyan.FFmpeg
         echo.
-        echo     Continuing anyway — YouTube upload and some features won't work.
-        echo.
     ) else (
         echo [OK] ffmpeg installed successfully
     )
@@ -50,8 +61,6 @@ if errorlevel 1 (
     echo   LoRA Studio requires an NVIDIA GPU with 8GB+ VRAM.
     echo   Install drivers from: https://www.nvidia.com/drivers
     echo.
-    echo   Continuing anyway — generation will fail without a GPU.
-    echo.
 ) else (
     for /f "tokens=*" %%i in ('nvidia-smi --query-gpu=name,memory.total --format=csv,noheader,nounits 2^>nul') do (
         echo [OK] GPU: %%i MB VRAM
@@ -65,7 +74,7 @@ if not exist "venv" (
     python -m venv venv
     if errorlevel 1 (
         echo [ERROR] Failed to create venv.
-        goto :done
+        exit /b 1
     )
 )
 call venv\Scripts\activate.bat
@@ -78,9 +87,7 @@ pip install -r lora-studio\requirements.txt --quiet 2>nul
 REM ---- Check models ----
 echo [3/4] Checking models...
 if not exist "checkpoints\acestep-v15-turbo" (
-    echo.
-    echo   Models not found. The setup wizard will download them (~5GB).
-    echo.
+    echo   Models not found. The setup wizard will download them.
 )
 
 REM ---- Get local IP ----
@@ -94,19 +101,10 @@ set LOCAL_IP=%LOCAL_IP: =%
 REM ---- Start ----
 echo [4/4] Starting LoRA Studio...
 echo.
-echo ============================================
 echo   Local:   http://localhost:8888
 if defined LOCAL_IP echo   Network: http://%LOCAL_IP%:8888
-echo.
-echo   First run? The setup wizard will guide you.
-echo   Press Ctrl+C to stop.
-echo ============================================
 echo.
 
 cd lora-studio
 python server.py
-
-:done
-echo.
-echo Press any key to close...
-pause >nul
+exit /b
