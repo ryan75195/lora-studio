@@ -70,10 +70,37 @@ async def warmup_models():
     _queue.recover_on_startup()
 
     def _warmup():
-        _model_status["message"] = "Downloading models (first run only)..."
-        print("  Warming up models...", flush=True)
-        _model_status["message"] = "Loading AI models into GPU..."
-        _models._ensure_models()
+        from pathlib import Path
+        cp = Path(__file__).parent.parent / "checkpoints"
+        has_models = (cp / "acestep-v15-turbo").exists()
+
+        if not has_models:
+            _model_status["message"] = "Downloading AI models (~5GB, first run only)..."
+            print("  Models not found — downloading...", flush=True)
+
+            # Monitor download progress by checking file count
+            import threading, time
+            stop_monitor = threading.Event()
+            def monitor():
+                while not stop_monitor.is_set():
+                    try:
+                        files = list(cp.rglob("*")) if cp.exists() else []
+                        total_mb = sum(f.stat().st_size for f in files if f.is_file()) / (1024*1024)
+                        _model_status["message"] = f"Downloading models... ({total_mb:.0f} MB downloaded)"
+                    except Exception:
+                        pass
+                    time.sleep(3)
+            t = threading.Thread(target=monitor, daemon=True)
+            t.start()
+
+            print("  Warming up models...", flush=True)
+            _models._ensure_models()
+            stop_monitor.set()
+        else:
+            _model_status["message"] = "Loading AI models into GPU..."
+            print("  Warming up models...", flush=True)
+            _models._ensure_models()
+
         _model_status["ready"] = True
         _model_status["message"] = "Ready!"
         print("  Models ready!", flush=True)
