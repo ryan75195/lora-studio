@@ -96,5 +96,16 @@ if __name__ == "__main__":
     print(f"  LoRAs:   {LORA_DIR}")
     print(f"  Output:  {OUTPUT_DIR}")
     print("=" * 50)
-    uvicorn.run(app, host=SERVER_HOST, port=SERVER_PORT)
+    # Log to file AND console
+    import logging
+    log_path = str(Path(__file__).parent.parent / "lora-studio.log")
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(message)s",
+        handlers=[
+            logging.StreamHandler(),
+            logging.FileHandler(log_path, encoding="utf-8"),
+        ],
+    )
+    uvicorn.run(app, host=SERVER_HOST, port=SERVER_PORT, log_level="info")
 # trigger
