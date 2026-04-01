@@ -2,23 +2,6 @@
 title LoRA Studio
 cd /d "%~dp0"
 
-REM Log to file AND show on console using powershell tee
-set LOGFILE=%~dp0lora-studio.log
-echo LoRA Studio started at %date% %time% > "%LOGFILE%"
-
-REM Run main via powershell to get tee behavior
-powershell -Command "& { cmd /c 'call %~f0 __main__' 2>&1 | Tee-Object -FilePath '%LOGFILE%' -Append }"
-echo.
-echo ============================================
-echo   Server stopped.
-echo   Log saved to: %LOGFILE%
-echo ============================================
-echo.
-echo Press any key to close...
-pause >nul
-exit /b
-
-:__main__
 echo ============================================
 echo   LoRA Studio Launcher
 echo ============================================
@@ -43,7 +26,7 @@ if not errorlevel 1 (
 )
 echo [ERROR] Python not found!
 echo   Please install Python 3.12 from https://python.org
-exit /b 1
+goto :done
 
 :pyfound
 for /f "tokens=*" %%v in ('%PY% --version 2^>^&1') do echo [OK] %%v
@@ -78,7 +61,7 @@ if not exist "venv" (
     %PY% -m venv venv
     if errorlevel 1 (
         echo [ERROR] Failed to create venv.
-        exit /b 1
+        goto :done
     )
 )
 call venv\Scripts\activate.bat
@@ -99,9 +82,16 @@ if not exist "checkpoints\acestep-v15-turbo" (
 REM ---- Start ----
 echo [4/4] Starting LoRA Studio...
 echo.
+echo ============================================
 echo   Local: http://localhost:8888
+echo   Press Ctrl+C to stop.
+echo ============================================
 echo.
 
 cd lora-studio
 python server.py
-exit /b
+
+:done
+echo.
+echo Press any key to close...
+pause >nul
