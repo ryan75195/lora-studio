@@ -136,7 +136,8 @@ if __name__ == "__main__":
     print("=" * 50)
     # Log to file AND console
     import logging
-    log_path = str(Path(__file__).parent.parent / "lora-studio.log")
+    from pathlib import Path as _P
+    log_path = str(_P(__file__).parent.parent / "lora-studio.log")
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(message)s",
