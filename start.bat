@@ -23,41 +23,51 @@ echo   LoRA Studio Launcher
 echo ============================================
 echo.
 
-REM ---- Check Python ----
-python --version >nul 2>&1
-if errorlevel 1 (
-    echo [ERROR] Python not found!
-    echo.
-    echo   Please install Python 3.10+ from https://python.org
-    echo   Make sure to check "Add Python to PATH" during install.
-    echo.
-    exit /b 1
+REM ---- Find Python (try py -3.12, then py -3, then python) ----
+set PY=
+py -3.12 --version >nul 2>&1
+if not errorlevel 1 (
+    set PY=py -3.12
+    goto :pyfound
 )
-python -c "import sys; assert sys.platform=='win32', f'Wrong Python: {sys.platform}'" >nul 2>&1
+py -3 --version >nul 2>&1
+if not errorlevel 1 (
+    set PY=py -3
+    goto :pyfound
+)
+python --version >nul 2>&1
+if not errorlevel 1 (
+    set PY=python
+    goto :pyfound
+)
+echo [ERROR] Python not found!
+echo.
+echo   Please install Python 3.12 from https://python.org
+echo   Make sure to check "Add Python to PATH" during install.
+echo.
+exit /b 1
+
+:pyfound
+for /f "tokens=*" %%v in ('%PY% --version 2^>^&1') do echo [OK] %%v
+
+REM ---- Check platform ----
+%PY% -c "import sys; assert sys.platform=='win32'" >nul 2>&1
 if errorlevel 1 (
     echo [ERROR] Wrong Python detected! You may have WSL or Linux Python.
-    echo   Install Windows Python from https://python.org
-    echo   Then remove the Windows Store Python alias:
-    echo   Settings ^> Apps ^> App execution aliases ^> turn off Python
-    echo.
     exit /b 1
 )
-echo [OK] Python found
 
 REM ---- Check ffmpeg ----
 ffmpeg -version >nul 2>&1
 if errorlevel 1 (
-    echo [!] ffmpeg not found — needed for video creation and audio processing
-    echo     Attempting to install via winget...
+    echo [!] ffmpeg not found — attempting install via winget...
     winget install Gyan.FFmpeg --accept-package-agreements --accept-source-agreements >nul 2>&1
     ffmpeg -version >nul 2>&1
     if errorlevel 1 (
-        echo [!] Auto-install failed. Please install manually:
-        echo     https://ffmpeg.org/download.html
-        echo     Or: winget install Gyan.FFmpeg
+        echo [!] Install ffmpeg manually: https://ffmpeg.org/download.html
         echo.
     ) else (
-        echo [OK] ffmpeg installed successfully
+        echo [OK] ffmpeg installed
     )
 ) else (
     echo [OK] ffmpeg found
@@ -67,7 +77,6 @@ REM ---- Check NVIDIA GPU ----
 nvidia-smi >nul 2>&1
 if errorlevel 1 (
     echo [WARNING] NVIDIA GPU not detected!
-    echo   LoRA Studio requires an NVIDIA GPU with 8GB+ VRAM.
     echo   Install drivers from: https://www.nvidia.com/drivers
     echo.
 ) else (
@@ -78,7 +87,7 @@ REM ---- Create/activate venv ----
 if not exist "venv" (
     echo.
     echo [1/4] Creating virtual environment...
-    python -m venv venv
+    %PY% -m venv venv
     if errorlevel 1 (
         echo [ERROR] Failed to create venv.
         exit /b 1
