@@ -33,6 +33,15 @@ if errorlevel 1 (
     echo.
     exit /b 1
 )
+python -c "import sys; assert sys.platform=='win32', f'Wrong Python: {sys.platform}'" >nul 2>&1
+if errorlevel 1 (
+    echo [ERROR] Wrong Python detected! You may have WSL or Linux Python.
+    echo   Install Windows Python from https://python.org
+    echo   Then remove the Windows Store Python alias:
+    echo   Settings ^> Apps ^> App execution aliases ^> turn off Python
+    echo.
+    exit /b 1
+)
 echo [OK] Python found
 
 REM ---- Check ffmpeg ----
@@ -79,8 +88,8 @@ call venv\Scripts\activate.bat
 
 REM ---- Install dependencies ----
 echo [2/4] Installing dependencies (first run may take a few minutes)...
-pip install -r requirements.txt --quiet 2>nul
-pip install -r lora-studio\requirements.txt --quiet 2>nul
+python -m pip install -r requirements.txt --quiet
+python -m pip install -r lora-studio\requirements.txt --quiet
 
 REM ---- Check models ----
 echo [3/4] Checking models...
