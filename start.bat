@@ -62,9 +62,7 @@ if errorlevel 1 (
     echo   Install drivers from: https://www.nvidia.com/drivers
     echo.
 ) else (
-    for /f "tokens=*" %%i in ('nvidia-smi --query-gpu=name,memory.total --format=csv,noheader,nounits 2^>nul') do (
-        echo [OK] GPU: %%i MB VRAM
-    )
+    echo [OK] NVIDIA GPU found
 )
 
 REM ---- Create/activate venv ----
@@ -90,19 +88,10 @@ if not exist "checkpoints\acestep-v15-turbo" (
     echo   Models not found. The setup wizard will download them.
 )
 
-REM ---- Get local IP ----
-for /f "tokens=2 delims=:" %%a in ('ipconfig ^| findstr /c:"IPv4"') do (
-    set LOCAL_IP=%%a
-    goto :gotip
-)
-:gotip
-set LOCAL_IP=%LOCAL_IP: =%
-
 REM ---- Start ----
 echo [4/4] Starting LoRA Studio...
 echo.
 echo   Local:   http://localhost:8888
-if defined LOCAL_IP echo   Network: http://%LOCAL_IP%:8888
 echo.
 
 cd lora-studio
