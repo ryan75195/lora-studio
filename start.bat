@@ -2,11 +2,12 @@
 title LoRA Studio
 cd /d "%~dp0"
 
-REM Log everything to file
+REM Log to file AND show on console using powershell tee
 set LOGFILE=%~dp0lora-studio.log
-echo. > "%LOGFILE%"
-echo LoRA Studio started at %date% %time% >> "%LOGFILE%"
-call :main >> "%LOGFILE%" 2>&1
+echo LoRA Studio started at %date% %time% > "%LOGFILE%"
+
+REM Run main via powershell to get tee behavior
+powershell -Command "& { cmd /c 'call %~f0 __main__' 2>&1 | Tee-Object -FilePath '%LOGFILE%' -Append }"
 echo.
 echo ============================================
 echo   Server stopped.
@@ -17,13 +18,13 @@ echo Press any key to close...
 pause >nul
 exit /b
 
-:main
+:__main__
 echo ============================================
 echo   LoRA Studio Launcher
 echo ============================================
 echo.
 
-REM ---- Find Python (try py -3.12, then py -3, then python) ----
+REM ---- Find Python ----
 set PY=
 py -3.12 --version >nul 2>&1
 if not errorlevel 1 (
@@ -41,31 +42,20 @@ if not errorlevel 1 (
     goto :pyfound
 )
 echo [ERROR] Python not found!
-echo.
 echo   Please install Python 3.12 from https://python.org
-echo   Make sure to check "Add Python to PATH" during install.
-echo.
 exit /b 1
 
 :pyfound
 for /f "tokens=*" %%v in ('%PY% --version 2^>^&1') do echo [OK] %%v
 
-REM ---- Check platform ----
-%PY% -c "import sys; assert sys.platform=='win32'" >nul 2>&1
-if errorlevel 1 (
-    echo [ERROR] Wrong Python detected! You may have WSL or Linux Python.
-    exit /b 1
-)
-
 REM ---- Check ffmpeg ----
 ffmpeg -version >nul 2>&1
 if errorlevel 1 (
-    echo [!] ffmpeg not found — attempting install via winget...
+    echo [!] ffmpeg not found — installing via winget...
     winget install Gyan.FFmpeg --accept-package-agreements --accept-source-agreements >nul 2>&1
     ffmpeg -version >nul 2>&1
     if errorlevel 1 (
         echo [!] Install ffmpeg manually: https://ffmpeg.org/download.html
-        echo.
     ) else (
         echo [OK] ffmpeg installed
     )
@@ -73,17 +63,15 @@ if errorlevel 1 (
     echo [OK] ffmpeg found
 )
 
-REM ---- Check NVIDIA GPU ----
+REM ---- Check GPU ----
 nvidia-smi >nul 2>&1
 if errorlevel 1 (
     echo [WARNING] NVIDIA GPU not detected!
-    echo   Install drivers from: https://www.nvidia.com/drivers
-    echo.
 ) else (
     echo [OK] NVIDIA GPU found
 )
 
-REM ---- Create/activate venv ----
+REM ---- Venv ----
 if not exist "venv" (
     echo.
     echo [1/4] Creating virtual environment...
@@ -95,23 +83,23 @@ if not exist "venv" (
 )
 call venv\Scripts\activate.bat
 
-REM ---- Install dependencies ----
-echo [2/4] Installing dependencies (first run may take a few minutes)...
+REM ---- Dependencies ----
+echo [2/4] Installing dependencies...
 python -m pip install --upgrade pip --quiet
 python -m pip install torch torchvision torchaudio --extra-index-url https://download.pytorch.org/whl/cu128 --quiet
 python -m pip install -r requirements.txt --quiet
 python -m pip install -r lora-studio\requirements.txt --quiet
 
-REM ---- Check models ----
+REM ---- Models ----
 echo [3/4] Checking models...
 if not exist "checkpoints\acestep-v15-turbo" (
-    echo   Models not found. The setup wizard will download them.
+    echo   Models not found. They will download automatically on first run.
 )
 
 REM ---- Start ----
 echo [4/4] Starting LoRA Studio...
 echo.
-echo   Local:   http://localhost:8888
+echo   Local: http://localhost:8888
 echo.
 
 cd lora-studio
