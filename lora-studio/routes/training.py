@@ -227,13 +227,16 @@ async def start_training(body: TrainRequest):
                 except Exception:
                     pass
 
-            # Ensure VAE is loaded for preprocessing (CPU offloading may have unloaded it)
-            try:
-                if hasattr(handler, '_load_vae_model'):
-                    handler._load_vae_model()
-                    print("  VAE loaded for preprocessing", flush=True)
-            except Exception as vae_err:
-                print(f"  VAE load warning: {vae_err}", flush=True)
+            # Disable CPU offloading during preprocessing — VAE must stay loaded
+            if hasattr(handler, '_offload_to_cpu'):
+                handler._offload_to_cpu = False
+                print("  Disabled CPU offloading for preprocessing", flush=True)
+            # Move VAE back to GPU if it was offloaded
+            if hasattr(handler, 'vae') and handler.vae is not None:
+                import torch
+                device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+                handler.vae = handler.vae.to(device)
+                print(f"  VAE moved to {device}", flush=True)
 
             tensor_dir = str(LORA_DIR / name / "preprocessed")
             # Check if tensors already exist

@@ -136,6 +136,8 @@ class PreprocessMixin:
 
                 # -- VAE encode (tiled, with CPU offloading) -------------------
                 with dit_handler._load_model_context("vae"):
+                    # Re-read vae after context manager loads it (may have been offloaded)
+                    vae = dit_handler.vae
                     vae_device = next(vae.parameters()).device
                     audio_gpu = audio.to(vae_device).to(vae.dtype)
                     debug_log_verbose_for(
@@ -172,6 +174,9 @@ class PreprocessMixin:
                     logger.info(f"{'='*70}\n")
 
                 with dit_handler._load_model_context("text_encoder"):
+                    # Re-read after context manager loads it
+                    text_encoder = dit_handler.text_encoder
+                    text_tokenizer = dit_handler.text_tokenizer
                     t0 = debug_start_verbose_for("dataset", f"encode_text[{i}]")
                     text_hidden_states, text_attention_mask = encode_text(
                         text_encoder, text_tokenizer, text_prompt, device, dtype
