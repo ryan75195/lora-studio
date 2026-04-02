@@ -146,6 +146,7 @@ async def start_training(body: TrainRequest):
                         sample.duration = cached.get('duration')
                         sample.language = cached.get('language', '')
                         sample.is_labeled = True
+                        sample.labeled = True
                         cached_count += 1
                     except Exception:
                         pass
@@ -225,6 +226,14 @@ async def start_training(body: TrainRequest):
                         cache_file.write_text(json.dumps(label_data, indent=2), encoding='utf-8')
                 except Exception:
                     pass
+
+            # Ensure VAE is loaded for preprocessing (CPU offloading may have unloaded it)
+            try:
+                if hasattr(handler, '_load_vae_model'):
+                    handler._load_vae_model()
+                    print("  VAE loaded for preprocessing", flush=True)
+            except Exception as vae_err:
+                print(f"  VAE load warning: {vae_err}", flush=True)
 
             tensor_dir = str(LORA_DIR / name / "preprocessed")
             # Check if tensors already exist
