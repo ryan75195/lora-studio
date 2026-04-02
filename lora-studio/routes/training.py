@@ -240,11 +240,25 @@ async def start_training(body: TrainRequest):
                     "phase": "preprocessing", "message": "Preprocessing to tensors...",
                     "phase_progress": 0, "eta_seconds": None,
                 })
-                builder.preprocess_to_tensors(
-                    dit_handler=handler,
-                    output_dir=tensor_dir,
-                    preprocess_mode="lora",
-                )
+                print(f"  Preprocessing {len(all_samples)} samples to {tensor_dir}", flush=True)
+                print(f"  Labeled samples: {sum(1 for s in all_samples if getattr(s, 'is_labeled', False))}", flush=True)
+                for s in all_samples[:3]:
+                    print(f"    Sample: {getattr(s, 'audio_path', '?')}, labeled={getattr(s, 'is_labeled', False)}, caption={getattr(s, 'caption', '')[:50]}", flush=True)
+                try:
+                    result = builder.preprocess_to_tensors(
+                        dit_handler=handler,
+                        output_dir=tensor_dir,
+                        preprocess_mode="lora",
+                    )
+                    print(f"  preprocess_to_tensors returned: {result}", flush=True)
+                except Exception as preprocess_err:
+                    print(f"  Preprocessing ERROR: {preprocess_err}", flush=True)
+                    import traceback
+                    traceback.print_exc()
+                    raise
+                # Check what was produced
+                produced = list(Path(tensor_dir).glob("*.pt")) if Path(tensor_dir).exists() else []
+                print(f"  Preprocessing produced {len(produced)} tensor files", flush=True)
 
             train_start = _time.time()
             train_progress.update({
@@ -286,8 +300,16 @@ async def start_training(body: TrainRequest):
                     resume_from = str(ckpts[-1])
                     train_progress["message"] = f"Resuming from checkpoint: {ckpts[-1].name}"
 
+            # Verify tensors exist before training
+            tensor_files = list(Path(tensor_dir).glob("*.pt")) if Path(tensor_dir).exists() else []
+            if not tensor_files:
+                raise RuntimeError(f"No preprocessed tensors found in {tensor_dir}. Preprocessing may have failed.")
+            print(f"  Training on {len(tensor_files)} tensor files", flush=True)
+
             from services.gpu_lock import should_training_yield, release_gpu as _rel_gpu, wait_for_gpu as _wait_gpu
+            step_count = 0
             for step, loss, status in trainer.train_from_preprocessed(tensor_dir, training_state, resume_from=resume_from):
+                step_count += 1
                 train_progress["step"] = step
                 train_progress["phase_progress"] = step
                 train_progress["phase_total"] = total_steps
@@ -306,6 +328,8 @@ async def start_training(body: TrainRequest):
                     _wait_gpu("training", lambda msg: train_progress.update({"message": f"Step {step}/{total_steps} | {msg}"}))
                     train_progress["message"] = f"Step {step}/{total_steps} | Resuming training..."
 
+            if step_count == 0:
+                raise RuntimeError("Training completed 0 steps — check preprocessed tensors and training data.")
             train_progress["message"] = "Done!"
             train_progress["active"] = False
 

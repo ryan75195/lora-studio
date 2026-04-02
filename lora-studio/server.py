@@ -1,5 +1,17 @@
 """LoRA Studio - FastAPI backend for ACE-Step 1.5."""
 
+import os
+import sys
+
+# Fix Windows console encoding for Unicode characters (emojis in ACE-Step output)
+os.environ.setdefault("PYTHONIOENCODING", "utf-8")
+if sys.stdout and hasattr(sys.stdout, 'reconfigure'):
+    try:
+        sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+        sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+    except Exception:
+        pass
+
 import threading
 
 from fastapi import FastAPI

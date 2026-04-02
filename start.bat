@@ -1,6 +1,8 @@
 @echo off
 title LoRA Studio
 cd /d "%~dp0"
+chcp 65001 >nul 2>&1
+set PYTHONIOENCODING=utf-8
 
 echo ============================================
 echo   LoRA Studio Launcher
