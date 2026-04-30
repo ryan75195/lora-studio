@@ -127,46 +127,57 @@ export default function Waveform({ audioUrl, selection, onSelectionChange, curre
     return pct * duration;
   }, [duration]);
 
-  // Mouse/touch handlers for selection
+  // Mouse/touch handlers — tap to seek, drag to select
+  const DRAG_THRESHOLD = 5; // px before a click becomes a drag
+
   const handlePointerDown = useCallback((e) => {
     const clientX = e.touches ? e.touches[0].clientX : e.clientX;
     const t = xToTime(clientX);
 
     if (selection && duration > 0) {
       const handleRadius = (8 / (containerRef.current?.clientWidth || 300)) * duration;
-      // Check if near a handle
       if (Math.abs(t - selection[0]) < handleRadius) {
         setDragging('start');
-        dragStartRef.current = { x: clientX, origSel: [...selection] };
+        dragStartRef.current = { x: clientX, origSel: [...selection], moved: false };
         e.preventDefault();
         return;
       }
       if (Math.abs(t - selection[1]) < handleRadius) {
         setDragging('end');
-        dragStartRef.current = { x: clientX, origSel: [...selection] };
+        dragStartRef.current = { x: clientX, origSel: [...selection], moved: false };
         e.preventDefault();
         return;
       }
-      // Check if inside selection — drag region
       if (t > selection[0] && t < selection[1]) {
         setDragging('region');
-        dragStartRef.current = { x: clientX, origSel: [...selection], startTime: t };
+        dragStartRef.current = { x: clientX, origSel: [...selection], startTime: t, moved: false };
         e.preventDefault();
         return;
       }
     }
 
-    // New selection or seek
-    setDragging('new');
-    dragStartRef.current = { x: clientX, startTime: t };
-    if (onSeek) onSeek(t);
+    // Start as pending — will become 'new' selection if dragged, otherwise seek on release
+    setDragging('pending');
+    dragStartRef.current = { x: clientX, startTime: t, moved: false };
     e.preventDefault();
-  }, [selection, duration, xToTime, onSeek]);
+  }, [selection, duration, xToTime]);
 
   const handlePointerMove = useCallback((e) => {
     if (!dragging || !dragStartRef.current) return;
     const clientX = e.touches ? e.touches[0].clientX : e.clientX;
     const t = xToTime(clientX);
+    const dx = Math.abs(clientX - dragStartRef.current.x);
+
+    // Mark as moved once past threshold
+    if (dx > DRAG_THRESHOLD) dragStartRef.current.moved = true;
+
+    if (dragging === 'pending') {
+      // Only start a new selection after exceeding drag threshold
+      if (dx > DRAG_THRESHOLD) {
+        setDragging('new');
+      }
+      return;
+    }
 
     if (dragging === 'start') {
       const newStart = Math.max(0, Math.min(t, selection[1] - 1));
@@ -192,9 +203,13 @@ export default function Waveform({ audioUrl, selection, onSelectionChange, curre
   }, [dragging, selection, duration, xToTime, onSelectionChange]);
 
   const handlePointerUp = useCallback(() => {
+    // If we never exceeded the drag threshold, treat it as a seek (tap)
+    if (dragStartRef.current && !dragStartRef.current.moved) {
+      if (onSeek) onSeek(dragStartRef.current.startTime);
+    }
     setDragging(null);
     dragStartRef.current = null;
-  }, []);
+  }, [onSeek]);
 
   // Global move/up listeners
   useEffect(() => {

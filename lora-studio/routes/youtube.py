@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import logging
 import re
 import threading
 from pathlib import Path
@@ -12,6 +13,7 @@ from pydantic import BaseModel
 
 from services.config import DATA_DIR
 
+logger = logging.getLogger("lora-studio.youtube")
 router = APIRouter()
 
 # --- Module-level state for import progress ---
@@ -85,6 +87,8 @@ async def youtube_import(slug: str, body: YoutubeImportRequest):
         "done": False,
     }
 
+    logger.info(f"yt-import START | artist={slug} url={url}")
+
     thread = threading.Thread(
         target=_run_import,
         args=(url, tracks_dir),
@@ -122,6 +126,7 @@ def _run_import(url: str, tracks_dir: Path) -> None:
     try:
         import yt_dlp  # noqa: PLC0415
     except ImportError:
+        logger.error("yt-import FAILED | yt-dlp not installed")
         _import_progress.update(
             active=False,
             done=True,
@@ -151,6 +156,7 @@ def _run_import(url: str, tracks_dir: Path) -> None:
                 # Single video
                 entries = [info]
     except Exception as exc:
+        logger.error(f"yt-import FAILED | fetch info: {exc}", exc_info=True)
         _import_progress.update(
             active=False,
             done=True,
@@ -159,6 +165,7 @@ def _run_import(url: str, tracks_dir: Path) -> None:
         return
 
     total = len(entries)
+    logger.info(f"yt-import | found {total} entries")
     if total == 0:
         _import_progress.update(
             active=False,
@@ -205,8 +212,12 @@ def _run_import(url: str, tracks_dir: Path) -> None:
             with yt_dlp.YoutubeDL(ydl_opts_dl) as ydl:
                 ret = ydl.download([video_url])
                 if ret != 0:
+                    logger.warning(f"yt-import | failed download {idx}/{total}: {title}")
                     errors.append(f"Failed: {title}")
+                else:
+                    logger.info(f"yt-import | downloaded {idx}/{total}: {title}")
         except Exception as exc:
+            logger.error(f"yt-import | error on {idx}/{total} {title}: {exc}", exc_info=True)
             errors.append(f"{title}: {exc}")
 
     _import_progress["errors"] = errors
@@ -216,3 +227,4 @@ def _run_import(url: str, tracks_dir: Path) -> None:
         f"Done! {total - len(errors)}/{total} tracks downloaded."
         + (f" {len(errors)} error(s)." if errors else "")
     )
+    logger.info(f"yt-import DONE | {total - len(errors)}/{total} ok, {len(errors)} errors")

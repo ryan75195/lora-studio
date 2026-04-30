@@ -37,6 +37,7 @@ export const createArtist = (data) =>
     body: JSON.stringify(data),
   });
 export const getArtist = (slug) => request('/artists/' + slug);
+export const getArtistTracks = (slug) => request('/artists/' + slug + '/tracks-with-labels');
 export const deleteArtist = (slug) => request('/artists/' + slug, { method: 'DELETE' });
 export const uploadTracks = (slug, files) => {
   const form = new FormData();
@@ -130,13 +131,28 @@ export const describeCover = (albumId, data) =>
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data),
   });
-export const generateCover = (albumId, data) =>
-  request('/library/albums/' + albumId + '/cover', {
+export const generateCandidates = (albumId, data) =>
+  request('/library/albums/' + albumId + '/cover-candidates', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data),
   });
+export const selectCover = (albumId, data) =>
+  request('/library/albums/' + albumId + '/cover-select', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  });
+export const getAllCovers = () => request('/library/covers/all');
 export const getCoverUrl = (filename) => BASE + '/library/covers/' + filename;
+export const generateVideoLoop = (albumId, data) =>
+  request('/library/albums/' + albumId + '/video-loop', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  });
+export const getVideoLoopStatus = (albumId) =>
+  request('/library/albums/' + albumId + '/video-loop-status');
 
 // Favourites
 export const updateFavourites = (songIds) =>
@@ -158,6 +174,8 @@ export const youtubeImportStatusSSE = () => new EventSource(BASE + '/youtube-imp
 export const getYoutubeAuthUrl = () => get('/youtube/auth-url');
 export const youtubeAuthCallback = (data) => post('/youtube/auth-callback', data);
 export const getYoutubeAuthStatus = () => get('/youtube/auth-status');
+export const getYoutubeChannels = () => get('/youtube/channels');
+export const selectYoutubeChannel = (channelId) => post('/youtube/select-channel', { channel_id: channelId });
 export const youtubeUploadAlbum = (albumId) =>
   request(`/library/albums/${albumId}/youtube-upload`, { method: 'POST' });
 export const youtubeUploadStatusSSE = () => new EventSource(BASE + '/youtube-upload/status');

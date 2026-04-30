@@ -40,6 +40,8 @@ export default function ReviewPanel({ draftId, onToast, onBack, onAccepted }) {
   const [stripMessage, setStripMessage] = useState('');
   const [tweakInput, setTweakInput] = useState('');
   const [tweakLoading, setTweakLoading] = useState(false);
+  const [restyleCaption, setRestyleCaption] = useState('');
+  const [restyling, setRestyling] = useState(false);
   const [tweakMessages, setTweakMessages] = useState([]);
   const audioRef = useRef(null);
   const barRef = useRef(null);
@@ -106,7 +108,8 @@ export default function ReviewPanel({ draftId, onToast, onBack, onAccepted }) {
     setRepaintMessage('Repainting...');
     clearInterval(pollRef.current);
     try {
-      await repaintDraft({ draft_id: draftId, start, end, caption: repaintCaption, mode: repaintMode });
+      const strengthMap = { conservative: 0.8, balanced: 0.5, aggressive: 0.2 };
+      await repaintDraft({ draft_id: draftId, start, end, caption: repaintCaption, mode: repaintMode, strength: strengthMap[repaintMode] || 0.5 });
       pollRef.current = setInterval(async () => {
         try {
           const status = await getGenerateStatus();
@@ -175,6 +178,31 @@ export default function ReviewPanel({ draftId, onToast, onBack, onAccepted }) {
     }
   };
 
+  const handleRestyle = async () => {
+    if (!restyleCaption.trim() || !draft) return;
+    setRestyling(true);
+    try {
+      await startGenerate({
+        title: draft.title || '',
+        lora_name: (draft.lora_name && draft.lora_name !== '(base model)') ? draft.lora_name : '',
+        strength: draft.strength || 1.0,
+        caption: restyleCaption.trim(),
+        lyrics: draft.lyrics || '',
+        bpm: draft.bpm || null,
+        key: draft.key || '',
+        duration: draft.duration || 180,
+        ai_prompt: `Restyle: ${restyleCaption.trim()}`,
+        chat_history: [],
+      });
+      onToast('Restyling — same lyrics, new sound. Check the queue.');
+      await discardDraft(draftId).catch(() => {});
+      onBack();
+    } catch (e) {
+      onToast(e.message, 'error');
+      setRestyling(false);
+    }
+  };
+
   const handleTweak = async () => {
     const msg = tweakInput.trim();
     if (!msg || tweakLoading || !draft) return;
@@ -192,7 +220,7 @@ export default function ReviewPanel({ draftId, onToast, onBack, onAccepted }) {
         duration: draft.duration || 180,
       };
       const result = await aiBuild({
-        prompt: msg,
+        prompt: `MODIFY THE EXISTING SONG based on this feedback (do NOT create a new song, do NOT change the title unless asked): ${msg}`,
         current,
         chat_history: tweakMessages.map(m => ({ role: m.role, content: m.content })),
         lora_name: (draft.lora_name && draft.lora_name !== '(base model)') ? draft.lora_name : '',
@@ -200,24 +228,8 @@ export default function ReviewPanel({ draftId, onToast, onBack, onAccepted }) {
       if (result._chat) {
         setTweakMessages([...newMsgs, { role: 'assistant', content: result._chat }]);
       } else {
-        const summary = `Updated: ${result.title || 'song'} — ${result.bpm} BPM, ${result.key}`;
-        setTweakMessages([...newMsgs, { role: 'assistant', content: summary }]);
-        // Queue regeneration with new settings
-        await startGenerate({
-          title: result.title || draft.title || '',
-          lora_name: (draft.lora_name && draft.lora_name !== '(base model)') ? draft.lora_name : '',
-          strength: draft.strength || 1.0,
-          caption: result.caption || draft.caption || '',
-          lyrics: result.lyrics !== undefined ? result.lyrics : (draft.lyrics || ''),
-          bpm: result.bpm || draft.bpm || null,
-          key: result.key || draft.key || '',
-          duration: result.duration || draft.duration || 180,
-          ai_prompt: msg,
-          chat_history: newMsgs,
-        });
-        onToast('Regenerating with changes — check the queue');
-        await discardDraft(draftId).catch(() => {});
-        onBack();
+        const summary = `Updated: ${result.title || 'song'} — ${result.bpm} BPM, ${result.key}\n\nRegenerate with these changes?`;
+        setTweakMessages([...newMsgs, { role: 'assistant', content: summary, _pendingResult: result }]);
       }
     } catch (e) {
       setTweakMessages([...newMsgs, { role: 'assistant', content: `Error: ${e.message}` }]);
@@ -250,7 +262,7 @@ export default function ReviewPanel({ draftId, onToast, onBack, onAccepted }) {
 
   /* ---- Waveform + player + actions (left on desktop) ---- */
   const playerSection = (
-    <div style={isMobile ? {} : { flex: '0 0 58%', minWidth: 0 }}>
+    <div>
       {/* Waveform + Player */}
       <div style={{ background: '#161616', borderRadius: 16, padding: 16, marginBottom: 16 }}>
         <Waveform
@@ -333,31 +345,25 @@ export default function ReviewPanel({ draftId, onToast, onBack, onAccepted }) {
         <button
           onClick={async () => {
             if (!draft) return;
-            try {
-              await startGenerate({
-                title: draft.title || '',
-                lora_name: (draft.lora_name && draft.lora_name !== '(base model)') ? draft.lora_name : '',
-                strength: draft.strength || 1.0,
-                caption: draft.caption || '',
-                lyrics: draft.lyrics || '',
-                bpm: draft.bpm || null,
-                key: draft.key || '',
-                duration: draft.duration || 180,
-                ai_prompt: draft.ai_prompt || '',
-                chat_history: draft.chat_history || [],
-                source_song_id: draft.source_song_id || '',
-                generation_mode: draft.generation_mode || 'fresh',
-              });
-              onToast('Regenerating — check the queue');
-              await discardDraft(draftId).catch(() => {});
-              onBack();
-            } catch (e) { onToast(e.message, 'error'); }
+            sessionStorage.setItem('lora-studio:reuse-settings', JSON.stringify({
+              title: draft.title || '',
+              caption: draft.caption || '',
+              lyrics: draft.lyrics || '',
+              bpm: draft.bpm || null,
+              key: draft.key || '',
+              duration: draft.duration || 180,
+              lora_name: draft.lora_name || '',
+              strength: draft.strength || 1.6,
+              chat_history: draft.chat_history || [],
+            }));
+            await discardDraft(draftId).catch(() => {});
+            navigate('/generate');
           }}
           style={{ padding: '14px 16px', borderRadius: 14, border: '1px solid rgba(30,215,96,0.3)', background: 'rgba(30,215,96,0.08)', color: '#1ed760', fontSize: 14, fontWeight: 600, cursor: 'pointer' }}
         >
-          Regenerate
+          Back to Edit
         </button>
-        <button onClick={handleDiscard} style={{ padding: '14px 16px', borderRadius: 14, border: '1px solid #333', background: 'none', color: '#a7a7a7', fontSize: 14, cursor: 'pointer' }}>
+        <button onClick={() => { if (confirm('Discard this draft?')) handleDiscard(); }} style={{ padding: '14px 16px', borderRadius: 14, border: '1px solid #333', background: 'none', color: '#a7a7a7', fontSize: 14, cursor: 'pointer' }}>
           Discard
         </button>
       </div>
@@ -366,13 +372,13 @@ export default function ReviewPanel({ draftId, onToast, onBack, onAccepted }) {
 
   /* ---- Tabs + tab content (right on desktop) ---- */
   const tabsSection = (
-    <div style={isMobile ? {} : { flex: '0 0 40%', minWidth: 0, overflowY: 'auto', maxHeight: 'calc(100vh - 200px)' }}>
+    <div>
       {/* Tabs */}
       <div style={{ display: 'flex', borderBottom: '1px solid #222', marginBottom: 16 }}>
         <TabBtn id="info" label="Info" />
         <TabBtn id="tweak" label="Tweak" />
+        <TabBtn id="restyle" label="Restyle" />
         <TabBtn id="repaint" label="Edit Section" />
-        <TabBtn id="stems" label="Strip Stems" />
       </div>
 
       {/* Info tab */}
@@ -428,13 +434,59 @@ export default function ReviewPanel({ draftId, onToast, onBack, onAccepted }) {
           {tweakMessages.length > 0 && (
             <div style={{ flex: 1, overflowY: 'auto', marginBottom: 12, maxHeight: isMobile ? 200 : 'none' }}>
               {tweakMessages.map((msg, i) => (
-                <div key={i} style={{ marginBottom: 8, display: 'flex', justifyContent: msg.role === 'user' ? 'flex-end' : 'flex-start' }}>
-                  <div style={{
-                    padding: '8px 14px', borderRadius: msg.role === 'user' ? '14px 14px 4px 14px' : '14px 14px 14px 4px',
-                    background: msg.role === 'user' ? '#1ed760' : '#1a1a1a',
-                    color: msg.role === 'user' ? '#000' : '#c0c0c0',
-                    fontSize: 13, maxWidth: 380, lineHeight: 1.4, fontWeight: msg.role === 'user' ? 600 : 400,
-                  }}>{msg.content}</div>
+                <div key={i}>
+                  <div style={{ marginBottom: 8, display: 'flex', justifyContent: msg.role === 'user' ? 'flex-end' : 'flex-start' }}>
+                    <div style={{
+                      padding: '8px 14px', borderRadius: msg.role === 'user' ? '14px 14px 4px 14px' : '14px 14px 14px 4px',
+                      background: msg.role === 'user' ? '#1ed760' : '#1a1a1a',
+                      color: msg.role === 'user' ? '#000' : '#c0c0c0',
+                      fontSize: 13, maxWidth: 380, lineHeight: 1.4, fontWeight: msg.role === 'user' ? 600 : 400,
+                      whiteSpace: 'pre-wrap',
+                    }}>{msg.content}</div>
+                  </div>
+                  {/* Confirm/cancel buttons for pending regeneration */}
+                  {msg._pendingResult && i === tweakMessages.length - 1 && (
+                    <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+                      <button
+                        onClick={async () => {
+                          const result = msg._pendingResult;
+                          try {
+                            await startGenerate({
+                              title: result.title || draft.title || '',
+                              lora_name: (draft.lora_name && draft.lora_name !== '(base model)') ? draft.lora_name : '',
+                              strength: draft.strength || 1.0,
+                              caption: result.caption || draft.caption || '',
+                              lyrics: result.lyrics !== undefined ? result.lyrics : (draft.lyrics || ''),
+                              bpm: result.bpm || draft.bpm || null,
+                              key: result.key || draft.key || '',
+                              duration: result.duration || draft.duration || 180,
+                              ai_prompt: tweakMessages.filter(m => m.role === 'user').map(m => m.content).join(' → '),
+                              chat_history: tweakMessages,
+                            });
+                            onToast('Regenerating with changes — check the queue');
+                            await discardDraft(draftId).catch(() => {});
+                            onBack();
+                          } catch (e) { onToast(e.message, 'error'); }
+                        }}
+                        style={{
+                          padding: '8px 16px', borderRadius: 10, border: 'none',
+                          background: '#1ed760', color: '#000', fontSize: 13, fontWeight: 600, cursor: 'pointer',
+                        }}
+                      >Regenerate</button>
+                      <button
+                        onClick={() => {
+                          // Remove the pending result, keep the conversation
+                          setTweakMessages(prev => prev.map((m, j) =>
+                            j === i ? { ...m, content: m.content.replace('\n\nRegenerate with these changes?', ''), _pendingResult: undefined } : m
+                          ));
+                        }}
+                        style={{
+                          padding: '8px 16px', borderRadius: 10, border: '1px solid #333',
+                          background: 'none', color: '#888', fontSize: 13, cursor: 'pointer',
+                        }}
+                      >Keep current</button>
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
@@ -473,61 +525,88 @@ export default function ReviewPanel({ draftId, onToast, onBack, onAccepted }) {
         </div>
       )}
 
+      {/* Restyle tab */}
+      {tab === 'restyle' && (
+        <div>
+          <div style={{ fontSize: 13, color: '#888', marginBottom: 14, lineHeight: 1.5 }}>
+            Keep the same lyrics, BPM, and key — just change the sound. Describe the new style you want.
+          </div>
+
+          {/* Current caption for reference */}
+          <div style={{ marginBottom: 14 }}>
+            <div style={{ fontSize: 11, color: '#666', textTransform: 'uppercase', fontWeight: 600, marginBottom: 6 }}>Current style</div>
+            <div style={{ fontSize: 12, color: '#555', background: '#111', borderRadius: 10, padding: '10px 12px', lineHeight: 1.5 }}>
+              {draft.caption || 'No caption'}
+            </div>
+          </div>
+
+          {/* New caption input */}
+          <div style={{ marginBottom: 14 }}>
+            <div style={{ fontSize: 11, color: '#666', textTransform: 'uppercase', fontWeight: 600, marginBottom: 6 }}>New style</div>
+            <textarea
+              value={restyleCaption}
+              onChange={(e) => setRestyleCaption(e.target.value)}
+              placeholder="e.g. lo-fi acoustic, gentle fingerpicking, female soprano, dreamy reverb..."
+              style={{
+                width: '100%', background: '#111', border: '1px solid #333', borderRadius: 12,
+                padding: '14px', color: '#fff', fontSize: 14, minHeight: 80, resize: 'vertical',
+                outline: 'none', fontFamily: 'inherit', lineHeight: 1.5,
+              }}
+            />
+          </div>
+
+          {/* Quick style presets */}
+          <div style={{ marginBottom: 14, display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+            {[
+              'Acoustic unplugged',
+              'Lo-fi bedroom pop',
+              'Orchestral cinematic',
+              'Punk rock energy',
+              'Jazz lounge',
+              'Electronic synthwave',
+            ].map((s) => (
+              <button
+                key={s}
+                onClick={() => setRestyleCaption(s + ', ' + (draft.caption || '').split(',').slice(1).join(',').trim())}
+                style={{
+                  padding: '6px 12px', borderRadius: 10, fontSize: 12, cursor: 'pointer',
+                  background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)',
+                  color: '#888', transition: 'all 0.15s',
+                }}
+                onMouseEnter={(e) => { e.currentTarget.style.borderColor = 'rgba(30,215,96,0.3)'; e.currentTarget.style.color = '#aaa'; }}
+                onMouseLeave={(e) => { e.currentTarget.style.borderColor = 'rgba(255,255,255,0.08)'; e.currentTarget.style.color = '#888'; }}
+              >{s}</button>
+            ))}
+          </div>
+
+          {/* What stays the same */}
+          <div style={{ marginBottom: 14, background: '#111', borderRadius: 10, padding: '10px 12px', display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+            <div style={{ fontSize: 11, color: '#555' }}>Keeping:</div>
+            <div style={{ fontSize: 11, color: '#1ed760' }}>Lyrics</div>
+            <div style={{ fontSize: 11, color: '#1ed760' }}>{draft.bpm} BPM</div>
+            {draft.key && <div style={{ fontSize: 11, color: '#1ed760' }}>{draft.key}</div>}
+            {draft.lora_name && <div style={{ fontSize: 11, color: '#1ed760' }}>{draft.lora_name}</div>}
+          </div>
+
+          <button
+            onClick={handleRestyle}
+            disabled={restyling || !restyleCaption.trim()}
+            style={{
+              width: '100%', padding: '14px', borderRadius: 14, border: 'none',
+              background: restyling || !restyleCaption.trim() ? '#2a2a2a' : '#1ed760',
+              color: restyling || !restyleCaption.trim() ? '#555' : '#000',
+              fontSize: 15, fontWeight: 700, cursor: restyling || !restyleCaption.trim() ? 'not-allowed' : 'pointer',
+            }}
+          >
+            {restyling ? 'Queuing...' : 'Restyle Song'}
+          </button>
+        </div>
+      )}
+
       {/* Repaint tab */}
       {tab === 'repaint' && (() => {
-        // Parse sections from lyrics for quick-select buttons
-        const sections = [];
-        if (draft.lyrics) {
-          const totalDur = draft.duration || audioDuration || 180;
-          const matches = [...draft.lyrics.matchAll(/\[([^\]]+)\]/g)];
-          if (matches.length > 0) {
-            const secDur = totalDur / matches.length;
-            matches.forEach((m, i) => {
-              sections.push({
-                label: m[1].split(' - ')[0].trim(),
-                start: Math.round(i * secDur),
-                end: Math.round((i + 1) * secDur),
-              });
-            });
-          }
-        }
-
         return (
           <div>
-            {/* Section quick-select buttons */}
-            {sections.length > 0 && (
-              <div style={{ marginBottom: 14 }}>
-                <div style={{ fontSize: 11, color: '#666', textTransform: 'uppercase', fontWeight: 600, marginBottom: 8 }}>
-                  Jump to section
-                </div>
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                  {sections.map((sec, i) => {
-                    const isSelected = Math.abs(repaintStart - sec.start) < 2 && Math.abs(repaintEnd - sec.end) < 2;
-                    return (
-                      <button
-                        key={i}
-                        onClick={() => {
-                          setRepaintStart(sec.start);
-                          setRepaintEnd(sec.end);
-                          if (audioRef.current) audioRef.current.currentTime = sec.start;
-                        }}
-                        style={{
-                          padding: '6px 12px', borderRadius: 10, fontSize: 12, fontWeight: 600, cursor: 'pointer',
-                          background: isSelected ? 'rgba(249,158,11,0.15)' : '#111',
-                          border: isSelected ? '1px solid #f59e0b' : '1px solid #333',
-                          color: isSelected ? '#f59e0b' : '#aaa',
-                          transition: 'all 0.15s',
-                        }}
-                      >
-                        {sec.label}
-                        <span style={{ fontSize: 10, color: '#666', marginLeft: 4 }}>{sec.start}s</span>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-
             {/* Selected range + Play Selection */}
             <div style={{ display: 'flex', gap: 8, marginBottom: 14, alignItems: 'center', flexWrap: 'wrap' }}>
               <div style={{ background: '#111', borderRadius: 10, padding: '8px 14px', fontSize: 14, color: '#f59e0b', fontWeight: 600 }}>
@@ -553,16 +632,16 @@ export default function ReviewPanel({ draftId, onToast, onBack, onAccepted }) {
               </button>
             </div>
 
-            {/* Blend strength */}
+            {/* How much to change */}
             <div style={{ marginBottom: 14 }}>
               <div style={{ fontSize: 11, color: '#666', textTransform: 'uppercase', fontWeight: 600, marginBottom: 8 }}>
                 How much to change
               </div>
               <div style={{ display: 'flex', gap: 6 }}>
                 {[
-                  { id: 'conservative', label: 'Subtle', desc: 'Small tweaks' },
-                  { id: 'balanced', label: 'Balanced', desc: 'Moderate changes' },
-                  { id: 'aggressive', label: 'Rewrite', desc: 'Major changes' },
+                  { id: 'conservative', label: 'Small changes', desc: 'Keep most of the original' },
+                  { id: 'balanced', label: 'Moderate', desc: 'New take, same feel' },
+                  { id: 'aggressive', label: 'Full re-roll', desc: 'Completely regenerate' },
                 ].map((m) => (
                   <button
                     key={m.id}
@@ -582,35 +661,7 @@ export default function ReviewPanel({ draftId, onToast, onBack, onAccepted }) {
               </div>
             </div>
 
-            {/* Quick actions */}
-            <div style={{ marginBottom: 14 }}>
-              <div style={{ fontSize: 11, color: '#666', textTransform: 'uppercase', fontWeight: 600, marginBottom: 8 }}>
-                Quick fix
-              </div>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                {[
-                  'Fix vocal clarity',
-                  'Add guitar solo',
-                  'More energy',
-                  'Strip to instrumental',
-                  'Change melody',
-                  'Add harmonies',
-                ].map((s) => (
-                  <button
-                    key={s}
-                    onClick={() => setRepaintCaption(s)}
-                    style={{
-                      padding: '6px 12px', borderRadius: 10, fontSize: 12, cursor: 'pointer',
-                      background: repaintCaption === s ? 'rgba(249,158,11,0.12)' : 'rgba(255,255,255,0.04)',
-                      border: repaintCaption === s ? '1px solid #f59e0b' : '1px solid rgba(255,255,255,0.08)',
-                      color: repaintCaption === s ? '#f59e0b' : '#888',
-                    }}
-                  >{s}</button>
-                ))}
-              </div>
-            </div>
-
-            {/* Custom instructions */}
+            {/* Instructions */}
             <div style={{ marginBottom: 14 }}>
               <textarea
                 value={repaintCaption} onChange={(e) => setRepaintCaption(e.target.value)}
@@ -635,74 +686,62 @@ export default function ReviewPanel({ draftId, onToast, onBack, onAccepted }) {
         );
       })()}
 
-      {/* Stems tab */}
-      {tab === 'stems' && (
-        <div>
-          <div style={{ fontSize: 13, color: '#888', marginBottom: 14 }}>
-            Uses AI to separate and remove parts of the audio. Listen to the result before saving.
-          </div>
-          {[
-            { label: 'Remove Vocals Only', sub: 'Keep all instruments', keep: ['drums','bass','other','piano','guitar'], icon: '\uD83C\uDFA4' },
-            { label: 'Remove Guitar + Vocals', sub: 'Piano, bass & drums only', keep: ['drums','bass','other','piano'], icon: '\uD83C\uDFB8' },
-            { label: 'Drums + Bass Only', sub: 'Minimal rhythm bed', keep: ['drums','bass'], icon: '\uD83E\uDD41' },
-            { label: 'Vocals Only', sub: 'Strip all instruments', keep: ['vocals'], icon: '\uD83C\uDF99' },
-          ].map((p) => (
-            <button
-              key={p.label}
-              disabled={stripping}
-              onClick={() => handleStrip(p.keep)}
-              style={{
-                width: '100%', display: 'flex', alignItems: 'center', gap: 14,
-                padding: '14px 16px', marginBottom: 8, borderRadius: 14,
-                background: '#161616', border: '1px solid #222',
-                cursor: stripping ? 'not-allowed' : 'pointer', textAlign: 'left',
-              }}
-            >
-              <span style={{ fontSize: 20 }}>{p.icon}</span>
-              <div>
-                <div style={{ fontSize: 14, fontWeight: 600, color: stripping ? '#555' : '#fff' }}>{p.label}</div>
-                <div style={{ fontSize: 12, color: '#666' }}>{p.sub}</div>
-              </div>
-            </button>
-          ))}
-          {stripping && (
-            <div style={{ fontSize: 13, color: '#1ed760', marginTop: 8, textAlign: 'center' }}>{stripMessage}</div>
-          )}
-        </div>
-      )}
     </div>
   );
 
-  return (
-    <div style={{ paddingBottom: 100 }}>
-      {/* Back button */}
-      <button
-        onClick={handleDiscard}
-        style={{ background: 'none', border: 'none', color: '#a7a7a7', cursor: 'pointer', fontSize: 14, marginBottom: 12, display: 'flex', alignItems: 'center', gap: 6 }}
-      >
-        <svg viewBox="0 0 24 24" width={16} height={16} fill="none" stroke="currentColor" strokeWidth={2}><polyline points="15 18 9 12 15 6" /></svg>
-        Back
-      </button>
+  if (isMobile) {
+    return (
+      <div style={{ paddingBottom: 100 }}>
+        <button
+          onClick={() => { if (confirm('Discard this draft and go back?')) handleDiscard(); }}
+          style={{ background: 'none', border: 'none', color: '#a7a7a7', cursor: 'pointer', fontSize: 14, marginBottom: 12, display: 'flex', alignItems: 'center', gap: 6 }}
+        >
+          <svg viewBox="0 0 24 24" width={16} height={16} fill="none" stroke="currentColor" strokeWidth={2}><polyline points="15 18 9 12 15 6" /></svg>
+          Back
+        </button>
+        <h1 style={{ fontSize: 22, fontWeight: 700, color: '#fff', marginBottom: 4 }}>
+          {draft.title || draftId}
+        </h1>
+        <div style={{ fontSize: 13, color: '#666', marginBottom: 16 }}>
+          {[draft.key, draft.bpm ? draft.bpm + ' BPM' : '', draft.lora_name].filter(Boolean).join(' \u00b7 ')}
+        </div>
+        {playerSection}
+        {tabsSection}
+      </div>
+    );
+  }
 
-      {/* Title */}
-      <h1 style={{ fontSize: 22, fontWeight: 700, color: '#fff', marginBottom: 4 }}>
-        {draft.title || draftId}
-      </h1>
-      <div style={{ fontSize: 13, color: '#666', marginBottom: 16 }}>
-        {[draft.key, draft.bpm ? draft.bpm + ' BPM' : '', draft.lora_name].filter(Boolean).join(' \u00b7 ')}
+  // Desktop: full viewport, no scroll, stacked rows
+  return (
+    <div className="full-vh" style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden', padding: '16px 32px' }}>
+      {/* Header row: back + title */}
+      <div style={{ flexShrink: 0, display: 'flex', alignItems: 'center', gap: 16, marginBottom: 12 }}>
+        <button
+          onClick={() => { if (confirm('Discard this draft and go back?')) handleDiscard(); }}
+          style={{ background: 'none', border: 'none', color: '#a7a7a7', cursor: 'pointer', fontSize: 14, display: 'flex', alignItems: 'center', gap: 6 }}
+        >
+          <svg viewBox="0 0 24 24" width={16} height={16} fill="none" stroke="currentColor" strokeWidth={2}><polyline points="15 18 9 12 15 6" /></svg>
+          Back
+        </button>
+        <div>
+          <h1 style={{ fontSize: 20, fontWeight: 700, color: '#fff', margin: 0 }}>
+            {draft.title || draftId}
+          </h1>
+          <div style={{ fontSize: 12, color: '#666' }}>
+            {[draft.key, draft.bpm ? draft.bpm + ' BPM' : '', draft.lora_name].filter(Boolean).join(' \u00b7 ')}
+          </div>
+        </div>
       </div>
 
-      {isMobile ? (
-        <>
-          {playerSection}
-          {tabsSection}
-        </>
-      ) : (
-        <div style={{ display: 'flex', gap: 24, alignItems: 'flex-start' }}>
-          {playerSection}
-          {tabsSection}
-        </div>
-      )}
+      {/* Tabs section — takes remaining space */}
+      <div style={{ flex: 1, minHeight: 0, overflow: 'auto', marginBottom: 16 }}>
+        {tabsSection}
+      </div>
+
+      {/* Player + actions pinned at bottom */}
+      <div style={{ flexShrink: 0 }}>
+        {playerSection}
+      </div>
     </div>
   );
 }

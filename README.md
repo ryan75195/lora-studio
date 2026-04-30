@@ -57,8 +57,8 @@ You should see something like `Python 3.12.x`.
 
 **Option B: Clone with Git** (if you have Git installed)
 ```
-git clone https://github.com/ryan75195/ACE-Step-1.5.git
-cd ACE-Step-1.5
+git clone https://github.com/ryan75195/music-generator.git
+cd music-generator
 ```
 
 ---

@@ -331,8 +331,6 @@ def _process_job(job: dict) -> None:
 
                 _update_job_message(job_id, "Generating song...")
 
-                # Since GPT already provides full caption/lyrics/BPM/key,
-                # skip the local LLM "thinking" step — saves ~3GB VRAM
                 gen_params = GenerationParams(
                     task_type=task_type,
                     src_audio=src_audio,
@@ -343,9 +341,9 @@ def _process_job(job: dict) -> None:
                     keyscale=params.get("key", ""),
                     timesignature="4/4",
                     vocal_language="en",
-                    inference_steps=8,
-                    guidance_scale=9.0,
-                    thinking=False,
+                    inference_steps=15,
+                    guidance_scale=12.0,
+                    thinking=True,
                 )
                 config = GenerationConfig(batch_size=1, use_random_seed=True, audio_format="mp3")
                 result = generate_music(
@@ -410,9 +408,9 @@ def _process_remix_job(job_id, params, lora_name, strength, output_dir, draft_di
             keyscale=params.get("key", ""),
             timesignature="4/4",
             vocal_language="en",
-            inference_steps=8,
-            guidance_scale=9.0,
-            thinking=False,
+            inference_steps=15,
+            guidance_scale=12.0,
+            thinking=True,
         )
         config = GenerationConfig(batch_size=1, use_random_seed=True, audio_format="mp3")
         result = generate_music(
@@ -608,24 +606,6 @@ def _finalize_generation(job_id, params, result, lora_name, strength, draft_dir)
             draft_id = job_id
             draft_path = draft_dir / f"{draft_id}.mp3"
             Path(src).rename(draft_path)
-
-            # Auto-strip vocals for backing tracks / instrumentals
-            caption = params.get("caption", "").lower()
-            is_backing = any(kw in caption for kw in ["backing track", "no vocals", "instrumental"])
-            if is_backing:
-                _update_job_message(job_id, "Stripping vocals from backing track...")
-                try:
-                    import tempfile
-                    from services.separation import separate_vocals
-                    tmp = tempfile.mkdtemp(prefix="strip_")
-                    _, inst_path = separate_vocals(str(draft_path), tmp)
-                    # Replace draft with instrumental-only version
-                    import shutil
-                    shutil.copy2(inst_path, str(draft_path))
-                    shutil.rmtree(tmp, ignore_errors=True)
-                    print(f"  [Queue] Stripped vocals from backing track {draft_id}", flush=True)
-                except Exception as e:
-                    print(f"  [Queue] Vocal strip failed (keeping original): {e}", flush=True)
 
             _save_draft_meta(job_id, params, lora_name, strength, draft_dir)
         else:

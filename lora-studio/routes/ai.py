@@ -1,6 +1,7 @@
 """AI song builder and album cover description/generation routes."""
 
 import json
+import logging
 import re
 import uuid as _uuid
 from datetime import datetime
@@ -13,7 +14,41 @@ import services.config as _cfg
 from services.config import OUTPUT_DIR, COVERS_DIR
 from routes.library import _load_library, _save_library, CoverRequest
 
+logger = logging.getLogger("lora-studio.ai")
 router = APIRouter()
+
+
+def _estimate_duration(lyrics: str, bpm: int) -> int:
+    """Estimate song duration from lyrics length and BPM.
+
+    Rough heuristic: ~3.5 seconds per lyric line at 120 BPM, scaled by actual BPM.
+    Instrumental sections ([Guitar Solo], [Outro], etc.) get ~15 seconds each.
+    Minimum 60s, add 15s padding for intro/outro.
+    """
+    if not lyrics:
+        return 180
+
+    lines = [l.strip() for l in lyrics.split('\n') if l.strip()]
+    vocal_lines = 0
+    instrumental_sections = 0
+
+    for line in lines:
+        if line.startswith('['):
+            tag = line.lower()
+            if any(k in tag for k in ['solo', 'instrumental', 'break', 'interlude', 'outro', 'intro']):
+                instrumental_sections += 1
+        else:
+            vocal_lines += 1
+
+    bpm = max(60, min(200, bpm or 120))
+    # Seconds per line scales inversely with BPM
+    sec_per_line = 3.5 * (120 / bpm)
+    vocal_time = vocal_lines * sec_per_line
+    inst_time = instrumental_sections * 15
+    padding = 15  # intro/outro buffer
+
+    duration = int(vocal_time + inst_time + padding)
+    return max(60, min(480, duration))
 
 
 # --- Models ---
@@ -39,10 +74,21 @@ class PlaylistChatRequest(BaseModel):
     lora_name: str = ""
 
 
+class CoverCandidatesRequest(BaseModel):
+    prompt: str
+
+
+class CoverSelectRequest(BaseModel):
+    candidate_index: int | None = None
+    source_album_id: str | None = None
+    prompt: str = ""
+
+
 # --- Routes ---
 
 @router.post("/api/ai-build")
 async def ai_build_song(body: SongBuilderRequest):
+    logger.info(f"ai-build | turn={body.turn} conv={body.conversation_id or '?'} lora={body.lora_name or 'base'} prompt={body.prompt[:80]!r}")
     try:
         from services.telemetry import log_event
         log_event("ai_chat", {
@@ -79,8 +125,7 @@ When creating/modifying a song, respond with ONLY a JSON object with these exact
   "caption": "Genre, mood, instruments, vocal style, production style - comma separated tags for the AI model",
   "lyrics": "Complete lyrics with [Verse 1], [Chorus], [Bridge], [Guitar Solo], [Outro] tags etc",
   "bpm": 120,
-  "key": "E minor",
-  "duration": 180
+  "key": "E minor"
 }
 
 TITLE: A short, memorable song title (2-5 words). MUST be unique and avoid AI clichés.
@@ -129,6 +174,11 @@ Example captions:
 - Duet: "Pop blues duet, Sabrina Carpenter vocal sweet high soprano, Eric Clapton vocal raspy gravelly blues tenor, acoustic guitar, blues licks, piano, intimate production"
 - Generic vocal: "Dark indie rock, female vocal, raspy and haunting alto, electric guitar, reverb-heavy drums"
 - Instrumental: "Cinematic orchestral, instrumental, no vocals, sweeping strings, french horn, epic percussion"
+
+CAPTION CONFLICT RULE (CRITICAL):
+- NEVER put "instrumental" in the caption if the song has lyrics/vocals. The word "instrumental" in the caption suppresses vocals.
+- If inspired by an "instrumental jam" or similar source, rewrite the caption to focus on the instruments and style WITHOUT the word "instrumental". Example: "raw blues-rock jam" not "instrumental jam".
+- Only use "instrumental, no vocals" when the user explicitly asks for no singing.
 
 BACKING TRACKS & JAM TRACKS (CRITICAL):
 - If the user asks for a "backing track", "jam track", or "track to play along with", this is an INSTRUMENTAL where the user will play a solo instrument over it.
@@ -240,6 +290,11 @@ If the user IS requesting song changes, apply them and return the FULL updated s
         )
         text = resp.choices[0].message.content
         result = json.loads(text)
+        # Auto-calculate duration from lyrics + BPM if not set
+        if result.get('lyrics') and not result.get('_chat'):
+            result['duration'] = _estimate_duration(result.get('lyrics', ''), result.get('bpm', 120))
+        elif not result.get('duration'):
+            result['duration'] = 180
         # Return the AI's response text too for chat history
         result["_ai_response"] = text
         return result
@@ -247,9 +302,15 @@ If the user IS requesting song changes, apply them and return the FULL updated s
         start = text.find('{')
         end = text.rfind('}') + 1
         if start >= 0 and end > start:
-            return json.loads(text[start:end])
+            result = json.loads(text[start:end])
+            if result.get('lyrics') and not result.get('_chat'):
+                result['duration'] = _estimate_duration(result.get('lyrics', ''), result.get('bpm', 120))
+            elif not result.get('duration'):
+                result['duration'] = 180
+            return result
         raise HTTPException(status_code=500, detail="AI returned invalid JSON")
     except Exception as e:
+        logger.error(f"ai-build FAILED | conv={body.conversation_id or '?'} error={e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -305,15 +366,13 @@ KEY: Pick the best key for the mood:
 - Blues/rock: E major, A major, G major
 - Format: "[note] [major/minor]"
 
-DURATION: Based on song structure:
-- Short/simple (verse-chorus-verse): 120-150
-- Standard song: 180-210
-- Extended with solos: 240-300"""
+Do NOT include a "duration" field — it will be calculated automatically from the lyrics length and BPM. Write ALL the lyrics you want sung — nothing will be cut off."""
 
 
 @router.post("/api/ai-playlist/chat")
 async def ai_playlist_chat(body: PlaylistChatRequest):
     """Chat with AI to plan an album. Returns conversational response or a ready plan."""
+    logger.info(f"playlist-chat | lora={body.lora_name or 'base'} prompt={body.prompt[:80]!r}")
     try:
         from openai import OpenAI
         client = OpenAI(api_key=_cfg.OPENAI_API_KEY)
@@ -362,12 +421,14 @@ Always respond with JSON (no markdown, no backticks).{lora_hint}"""}]
         result["_raw"] = text
         return result
     except Exception as e:
+        logger.error(f"playlist-chat FAILED | error={e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.post("/api/ai-playlist")
 async def ai_playlist(body: PlaylistRequest):
     """Plan and generate an entire album from a single prompt."""
+    logger.info(f"ai-playlist | songs={body.song_count} lora={body.lora_name or 'base'} prompt={body.prompt[:80]!r}")
     try:
         from services.telemetry import log_event
         log_event("ai_playlist", {
@@ -529,6 +590,7 @@ Generate exactly {song_count} songs. Respond with ONLY the JSON, no other text."
     except HTTPException:
         raise
     except Exception as e:
+        logger.error(f"ai-playlist FAILED | error={e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -591,34 +653,221 @@ async def describe_cover(album_id: str, body: CoverRequest = CoverRequest()):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/api/library/albums/{album_id}/cover")
-async def generate_cover(album_id: str, body: CoverRequest = CoverRequest()):
-    """Takes the user's final image prompt and sends to DALL-E."""
+@router.post("/api/library/albums/{album_id}/cover-candidates")
+async def generate_cover_candidates(album_id: str, body: CoverCandidatesRequest):
+    """Generate 6 square cover candidates in parallel."""
     lib = _load_library()
     album = next((a for a in lib["albums"] if a["id"] == album_id), None)
     if not album:
         raise HTTPException(status_code=404, detail="Album not found")
-    if not body.user_prompt:
+    if not body.prompt.strip():
         raise HTTPException(status_code=400, detail="Image prompt required")
-    try:
-        import base64
-        from openai import OpenAI
-        client = OpenAI(api_key=_cfg.OPENAI_API_KEY)
 
-        resp = client.images.generate(
-            model="gpt-image-1.5",
-            prompt=f"Album cover art: {body.user_prompt}. Professional music album artwork, square format, absolutely no text or words.",
-            size="1024x1024",
-            n=1,
-            quality="high",
-            output_format="png",
-        )
-        img_data = base64.b64decode(resp.data[0].b64_json)
-        cover_path = COVERS_DIR / f"{album_id}.png"
-        cover_path.write_bytes(img_data)
+    import base64
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    from openai import OpenAI
+
+    client = OpenAI(api_key=_cfg.OPENAI_API_KEY)
+    base_prompt = f"Album cover art: {body.prompt.strip()}. Professional music artwork, absolutely no text or words."
+
+    def generate_one(index):
+        try:
+            resp = client.images.generate(
+                model="gpt-image-1.5",
+                prompt=base_prompt,
+                size="1024x1024",
+                n=1,
+                quality="high",
+                output_format="png",
+            )
+            img_data = base64.b64decode(resp.data[0].b64_json)
+            path = COVERS_DIR / f"{album_id}_candidate_{index}.png"
+            path.write_bytes(img_data)
+            return index, str(path), None
+        except Exception as e:
+            return index, None, str(e)
+
+    candidates = [None] * 6
+    errors = []
+
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        futures = {pool.submit(generate_one, i): i for i in range(6)}
+        for future in as_completed(futures):
+            idx, path, error = future.result()
+            if error:
+                errors.append(f"Candidate {idx}: {error}")
+            else:
+                candidates[idx] = f"/api/library/covers/{album_id}_candidate_{idx}.png"
+
+    candidates = [c for c in candidates if c is not None]
+
+    if not candidates:
+        raise HTTPException(status_code=500, detail="All generations failed: " + "; ".join(errors))
+
+    album["cover_prompt"] = body.prompt.strip()
+    _save_library(lib)
+
+    return {"candidates": candidates, "count": len(candidates), "errors": errors if errors else None}
+
+
+@router.post("/api/library/albums/{album_id}/cover-select")
+async def select_cover(album_id: str, body: CoverSelectRequest):
+    """Select a candidate cover or reuse another album's cover."""
+    import base64
+    import shutil
+    import time as _time
+
+    lib = _load_library()
+    album = next((a for a in lib["albums"] if a["id"] == album_id), None)
+    if not album:
+        raise HTTPException(status_code=404, detail="Album not found")
+
+    if body.source_album_id:
+        source = next((a for a in lib["albums"] if a["id"] == body.source_album_id), None)
+        if not source:
+            raise HTTPException(status_code=404, detail="Source album not found")
+        src_cover = COVERS_DIR / f"{body.source_album_id}.png"
+        if not src_cover.exists():
+            raise HTTPException(status_code=404, detail="Source album has no cover")
+
+        shutil.copy2(str(src_cover), str(COVERS_DIR / f"{album_id}.png"))
+        src_wide = COVERS_DIR / f"{body.source_album_id}_wide.png"
+        if src_wide.exists():
+            shutil.copy2(str(src_wide), str(COVERS_DIR / f"{album_id}_wide.png"))
+        else:
+            prompt = source.get("cover_prompt", "")
+            if prompt:
+                try:
+                    from openai import OpenAI
+                    client = OpenAI(api_key=_cfg.OPENAI_API_KEY)
+                    resp = client.images.generate(
+                        model="gpt-image-1.5",
+                        prompt=f"Wide cinematic music video background: {prompt}. Professional music artwork, absolutely no text or words.",
+                        size="1536x1024", n=1, quality="high", output_format="png",
+                    )
+                    img = base64.b64decode(resp.data[0].b64_json)
+                    (COVERS_DIR / f"{album_id}_wide.png").write_bytes(img)
+                except Exception:
+                    pass
+
+        album["cover_prompt"] = source.get("cover_prompt", "")
+
+    elif body.candidate_index is not None:
+        candidate = COVERS_DIR / f"{album_id}_candidate_{body.candidate_index}.png"
+        if not candidate.exists():
+            raise HTTPException(status_code=404, detail="Candidate not found")
+
+        import shutil as _shutil
+        _shutil.copy2(str(candidate), str(COVERS_DIR / f"{album_id}.png"))
+
+        prompt = body.prompt or album.get("cover_prompt", "")
+        if prompt:
+            try:
+                from openai import OpenAI
+                client = OpenAI(api_key=_cfg.OPENAI_API_KEY)
+                resp = client.images.generate(
+                    model="gpt-image-1.5",
+                    prompt=f"Wide cinematic music video background: {prompt}. Professional music artwork, absolutely no text or words.",
+                    size="1536x1024", n=1, quality="high", output_format="png",
+                )
+                img = base64.b64decode(resp.data[0].b64_json)
+                (COVERS_DIR / f"{album_id}_wide.png").write_bytes(img)
+            except Exception:
+                pass
+
+        album["cover_prompt"] = prompt
+
+        for i in range(6):
+            c = COVERS_DIR / f"{album_id}_candidate_{i}.png"
+            if c.exists():
+                c.unlink()
+    else:
+        raise HTTPException(status_code=400, detail="Provide candidate_index or source_album_id")
+
+    ts = int(_time.time())
+    album["cover"] = f"/api/library/covers/{album_id}.png?v={ts}"
+    wide = COVERS_DIR / f"{album_id}_wide.png"
+    if wide.exists():
+        album["cover_wide"] = f"/api/library/covers/{album_id}_wide.png?v={ts}"
+    _save_library(lib)
+
+    return {"cover": album["cover"], "cover_wide": album.get("cover_wide", "")}
+
+
+@router.get("/api/library/covers/all")
+async def list_all_covers():
+    """List all albums that have covers."""
+    lib = _load_library()
+    result = []
+    for album in lib.get("albums", []):
+        if album.get("cover"):
+            result.append({
+                "album_id": album["id"],
+                "album_name": album.get("name", ""),
+                "cover_url": album["cover"],
+            })
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Video Loop (Kling AI)
+# ---------------------------------------------------------------------------
+
+class VideoLoopRequest(BaseModel):
+    prompt: str = "subtle atmospheric animation, gentle light shifts, soft ambient glow"
+
+
+@router.post("/api/library/albums/{album_id}/video-loop")
+async def generate_video_loop_endpoint(album_id: str, body: VideoLoopRequest):
+    """Start generating a Kling video loop from the album's wide cover."""
+    import threading
+    from services.kling import _loop_progress, generate_video_loop as _gen_loop
+
+    if _loop_progress["active"]:
+        raise HTTPException(status_code=409, detail="A video loop generation is already in progress")
+
+    lib = _load_library()
+    album = next((a for a in lib["albums"] if a["id"] == album_id), None)
+    if not album:
+        raise HTTPException(status_code=404, detail="Album not found")
+
+    wide_cover = COVERS_DIR / f"{album_id}_wide.png"
+    if not wide_cover.exists():
+        wide_cover = COVERS_DIR / f"{album_id}.png"
+        if not wide_cover.exists():
+            raise HTTPException(status_code=400, detail="Album has no cover image")
+
+    output_path = COVERS_DIR / f"{album_id}_loop.mp4"
+
+    _loop_progress.update({
+        "active": True,
+        "status": "starting",
+        "message": "Starting...",
+        "album_id": album_id,
+        "loop_url": None,
+    })
+
+    def run():
+        _gen_loop(str(wide_cover), body.prompt, str(output_path))
+        if _loop_progress["status"] == "done":
+            lib2 = _load_library()
+            for a in lib2["albums"]:
+                if a["id"] == album_id:
+                    a["video_loop"] = _loop_progress["loop_url"]
+                    break
+            _save_library(lib2)
+
+    threading.Thread(target=run, daemon=True).start()
+    return {"status": "started"}
+
+
+@router.get("/api/library/albums/{album_id}/video-loop-status")
+async def video_loop_status(album_id: str):
+    """Get the current video loop generation status."""
+    from services.kling import get_progress
+    progress = get_progress()
+    loop_path = COVERS_DIR / f"{album_id}_loop.mp4"
+    if not progress["active"] and progress["status"] == "idle" and loop_path.exists():
         import time as _time
-        album["cover"] = f"/api/library/covers/{album_id}.png?v={int(_time.time())}"
-        _save_library(lib)
-        return {"cover": album["cover"]}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        progress["loop_url"] = f"/api/library/covers/{album_id}_loop.mp4?v={int(_time.time())}"
+    return progress

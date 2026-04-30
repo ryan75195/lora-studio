@@ -72,6 +72,32 @@ async def get_artist(slug: str):
     return {**meta, "slug": slug, "tracks": tracks, "track_count": len(tracks)}
 
 
+@router.get("/api/artists/{slug}/tracks-with-labels")
+async def get_artist_tracks_labeled(slug: str):
+    """Return tracks with their cached label data (caption, bpm, key, etc.)."""
+    d = get_artist_dir(slug)
+    tracks_dir = d / "tracks"
+    if not tracks_dir.exists():
+        return []
+    result = []
+    for mp3 in sorted(tracks_dir.glob("*.mp3")):
+        entry = {"filename": mp3.stem}
+        label_file = mp3.with_suffix(".labels.json")
+        if label_file.exists():
+            try:
+                labels = json.loads(label_file.read_text(encoding="utf-8"))
+                entry["caption"] = labels.get("caption", "")
+                entry["lyrics"] = labels.get("lyrics", "")
+                entry["bpm"] = labels.get("bpm")
+                entry["key"] = labels.get("key", "")
+                entry["duration"] = labels.get("duration")
+                entry["language"] = labels.get("language", "")
+            except Exception:
+                pass
+        result.append(entry)
+    return result
+
+
 @router.delete("/api/artists/{slug}")
 async def delete_artist(slug: str):
     d = get_artist_dir(slug)

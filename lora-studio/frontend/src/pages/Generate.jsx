@@ -53,8 +53,9 @@ export default function Generate({ onToast }) {
     return <ReviewPanel draftId={reviewId} onToast={onToast} onBack={handleBack} onAccepted={handleAccepted} />;
   }
 
-  // Mode toggle pill
-  const ModeToggle = () => (
+  // Mode toggle pill — Auto Album feature-flagged off
+  const SHOW_AUTO_ALBUM = false;
+  const ModeToggle = () => SHOW_AUTO_ALBUM ? (
     <div style={{
       display: 'flex', gap: 4, padding: 3, background: '#111', borderRadius: 14,
       border: '1px solid rgba(255,255,255,0.06)', alignSelf: 'flex-start',
@@ -75,40 +76,45 @@ export default function Generate({ onToast }) {
         >{m.label}</button>
       ))}
     </div>
-  );
+  ) : null;
 
-  // Mobile layout
+  // Mobile layout — fixed full-screen, no scroll
   if (isMobile) {
     return (
-      <div>
-        <ModeToggle />
-        <div style={{ height: 12 }} />
-        {queueCount > 0 && (
-          <button
-            onClick={() => setShowMobileQueue(!showMobileQueue)}
-            style={{
-              display: 'flex', alignItems: 'center', gap: 8,
-              padding: '8px 14px', marginBottom: 12,
-              background: showMobileQueue ? 'rgba(30,215,96,0.1)' : '#181818',
-              border: showMobileQueue ? '1px solid rgba(30,215,96,0.3)' : '1px solid #222',
-              borderRadius: 20, color: showMobileQueue ? '#1ed760' : '#a7a7a7',
-              fontSize: 12, fontWeight: 600, cursor: 'pointer',
-            }}
-          >
-            Queue
-            <span style={{ background: '#1ed760', color: '#000', fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 10 }}>
-              {queueCount}
-            </span>
-          </button>
-        )}
-        {showMobileQueue && <QueueSection onToast={onToast} />}
-        {mode === 'song' ? (
-          <BuildForm onToast={onToast} />
-        ) : (
-          <div style={{ background: '#111', borderRadius: 20, border: '1px solid rgba(255,255,255,0.06)', minHeight: 400 }}>
-            <PlaylistBuilder onToast={onToast} onDone={() => navigate('/library')} />
-          </div>
-        )}
+      <div className="full-vh" style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
+        {/* Top bar: mode toggle + queue */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '12px 16px 0', flexShrink: 0 }}>
+          <ModeToggle />
+          {queueCount > 0 && (
+            <button
+              onClick={() => setShowMobileQueue(!showMobileQueue)}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 8,
+                padding: '8px 14px',
+                background: showMobileQueue ? 'rgba(30,215,96,0.1)' : '#181818',
+                border: showMobileQueue ? '1px solid rgba(30,215,96,0.3)' : '1px solid #222',
+                borderRadius: 20, color: showMobileQueue ? '#1ed760' : '#a7a7a7',
+                fontSize: 12, fontWeight: 600, cursor: 'pointer',
+              }}
+            >
+              Queue
+              <span style={{ background: '#1ed760', color: '#000', fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 10 }}>
+                {queueCount}
+              </span>
+            </button>
+          )}
+        </div>
+        {showMobileQueue && <div style={{ padding: '8px 16px', flexShrink: 0, maxHeight: '40vh', overflowY: 'auto' }}><QueueSection onToast={onToast} /></div>}
+        {/* Main content fills remaining space */}
+        <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', padding: '8px 16px 0' }}>
+          {mode === 'song' ? (
+            <BuildForm onToast={onToast} />
+          ) : (
+            <div style={{ flex: 1, background: '#111', borderRadius: 20, border: '1px solid rgba(255,255,255,0.06)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+              <PlaylistBuilder onToast={onToast} onDone={() => navigate('/library')} />
+            </div>
+          )}
+        </div>
       </div>
     );
   }

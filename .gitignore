@@ -233,6 +233,7 @@ scripts/__pycache__/
 !scripts/prepare_vae_calibration_data.py
 checkpoints_legacy/
 lora_output/
+lora-output/
 datasets/
 python_embeded/
 checkpoints_pack/
@@ -243,10 +244,16 @@ gradio_outputs/
 acestep/third_parts/vllm/
 test_lora_scale_fix.py
 lokr_output/
+.claude/
+.superpowers/
 .claude/skills/acestep/scripts/config.json
 .claude/skills/acestep/scripts/.first_gen_done
 .claude/skills/acestep-simplemv/scripts/public/
 config.json
+retrain_log.txt
+screenshots/
+shorts/
+scripts/rvc_poc/
 
 acestep_output/
 # macOS

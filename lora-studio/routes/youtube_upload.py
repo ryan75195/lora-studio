@@ -12,6 +12,7 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 
+import services.config as _cfg
 from services.config import DATA_DIR, OUTPUT_DIR, COVERS_DIR, PROJECT_ROOT, LIBRARY_PATH
 
 router = APIRouter()
@@ -47,14 +48,18 @@ SCOPES = ["https://www.googleapis.com/auth/youtube.upload",
 
 # --- Helpers ---
 
-# Default Google OAuth credentials (baked in for convenience)
-_DEFAULT_GOOGLE_CLIENT_ID = "REDACTED-GOOGLE-CLIENT-ID.apps.googleusercontent.com"
-_DEFAULT_GOOGLE_CLIENT_SECRET = "REDACTED-GOOGLE-CLIENT-SECRET"
-
-
 def _get_client_secrets() -> tuple[str, str]:
-    client_id = os.environ.get("GOOGLE_CLIENT_ID", "") or _DEFAULT_GOOGLE_CLIENT_ID
-    client_secret = os.environ.get("GOOGLE_CLIENT_SECRET", "") or _DEFAULT_GOOGLE_CLIENT_SECRET
+    client_id = _cfg.GOOGLE_CLIENT_ID or os.environ.get("GOOGLE_CLIENT_ID", "")
+    client_secret = _cfg.GOOGLE_CLIENT_SECRET or os.environ.get("GOOGLE_CLIENT_SECRET", "")
+    if not client_id or not client_secret:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "YouTube upload requires Google OAuth credentials. "
+                "Set google_client_id and google_client_secret in lora-studio/config.json, "
+                "or export GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET as environment variables."
+            ),
+        )
     return client_id, client_secret
 
 
@@ -150,10 +155,28 @@ def _find_album_songs(album_id: str) -> tuple[dict, list[dict]]:
     return album, songs
 
 
-def _make_video(audio_path: Path, cover_path: Path | None, output_path: Path) -> bool:
+def _make_video(audio_path: Path, cover_path: Path | None, output_path: Path, loop_path: Path | None = None) -> bool:
     """Use ffmpeg to create an MP4 from cover art + audio. Returns True on success."""
     if not _ffmpeg_available():
         return False
+
+    if loop_path and loop_path.exists():
+        cmd = [
+            "ffmpeg", "-y",
+            "-stream_loop", "-1",
+            "-i", str(loop_path),
+            "-i", str(audio_path),
+            "-c:v", "libx264",
+            "-preset", "medium",
+            "-crf", "18",
+            "-c:a", "aac",
+            "-b:a", "192k",
+            "-shortest",
+            "-pix_fmt", "yuv420p",
+            str(output_path),
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        return result.returncode == 0
 
     if cover_path and cover_path.exists():
         cmd = [
@@ -274,7 +297,78 @@ async def get_auth_url():
 @router.get("/api/youtube/auth-status")
 async def auth_status():
     """Return whether the user is authenticated with YouTube."""
-    return {"authenticated": _is_authenticated()}
+    result = {"authenticated": _is_authenticated()}
+    if result["authenticated"]:
+        # Include current channel info if available
+        channel_id = _get_selected_channel()
+        if channel_id:
+            result["channel_id"] = channel_id
+    return result
+
+
+@router.get("/api/youtube/channels")
+async def list_channels():
+    """List all YouTube channels accessible to the authenticated user."""
+    if not _is_authenticated():
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    try:
+        youtube = _build_youtube_service()
+        resp = youtube.channels().list(part="snippet", mine=True).execute()
+        channels = []
+        for ch in resp.get("items", []):
+            channels.append({
+                "id": ch["id"],
+                "title": ch["snippet"]["title"],
+                "thumbnail": ch["snippet"]["thumbnails"].get("default", {}).get("url", ""),
+            })
+        # Also check for brand accounts / managed channels
+        resp2 = youtube.channels().list(part="snippet", managedByMe=True).execute()
+        existing_ids = {c["id"] for c in channels}
+        for ch in resp2.get("items", []):
+            if ch["id"] not in existing_ids:
+                channels.append({
+                    "id": ch["id"],
+                    "title": ch["snippet"]["title"],
+                    "thumbnail": ch["snippet"]["thumbnails"].get("default", {}).get("url", ""),
+                })
+        selected = _get_selected_channel()
+        return {"channels": channels, "selected": selected}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/api/youtube/select-channel")
+async def select_channel(body: dict):
+    """Select which YouTube channel to upload to."""
+    channel_id = body.get("channel_id", "")
+    if not channel_id:
+        raise HTTPException(status_code=400, detail="channel_id required")
+    # Store selection
+    channel_file = CREDENTIALS_FILE.parent / "youtube_channel.json"
+    channel_file.write_text(json.dumps({"channel_id": channel_id}), encoding="utf-8")
+    return {"selected": channel_id}
+
+
+@router.post("/api/youtube/logout")
+async def youtube_logout():
+    """Clear YouTube credentials and channel selection."""
+    if CREDENTIALS_FILE.exists():
+        CREDENTIALS_FILE.unlink()
+    channel_file = CREDENTIALS_FILE.parent / "youtube_channel.json"
+    if channel_file.exists():
+        channel_file.unlink()
+    return {"status": "logged_out"}
+
+
+def _get_selected_channel() -> str:
+    """Return the selected channel ID, or empty string."""
+    channel_file = CREDENTIALS_FILE.parent / "youtube_channel.json"
+    if channel_file.exists():
+        try:
+            return json.loads(channel_file.read_text(encoding="utf-8")).get("channel_id", "")
+        except Exception:
+            pass
+    return ""
 
 
 @router.post("/api/library/albums/{album_id}/youtube-upload")
@@ -356,15 +450,8 @@ def _run_upload(album: dict, songs: list[dict]) -> None:
     uploaded_songs: list[tuple[str, str]] = []  # (song_id, video_id) pairs
     total = len(songs)
 
-    # Determine cover path
-    cover_path: Path | None = None
-    album_cover = album.get("cover")
-    if album_cover:
-        # cover may be a URL like /api/library/covers/filename.png?v=123
-        cover_filename = album_cover.split("/")[-1].split("?")[0]
-        candidate = COVERS_DIR / cover_filename
-        if candidate.exists():
-            cover_path = candidate
+    # Determine cover path — prefer wide version for video backgrounds
+    cover_path = _resolve_cover_path(album, prefer_wide=True)
 
     try:
         youtube = _build_youtube_service()
@@ -386,11 +473,11 @@ def _run_upload(album: dict, songs: list[dict]) -> None:
 
             # Try to read better title from song metadata JSON
             meta_json = OUTPUT_DIR / f"{song_id}.inputs.json"
+            song_meta = {}
             if meta_json.exists():
                 try:
-                    meta = json.loads(meta_json.read_text(encoding="utf-8"))
-                    inp = meta.get("inputs") or {}
-                    title = inp.get("title") or title
+                    song_meta = json.loads(meta_json.read_text(encoding="utf-8"))
+                    title = song_meta.get("title") or title
                 except Exception:
                     pass
 
@@ -398,7 +485,7 @@ def _run_upload(album: dict, songs: list[dict]) -> None:
             _upload_progress["current"] = idx
 
             video_path = tmp / f"{song_id}.mp4"
-            ok = _make_video(audio_path, cover_path, video_path)
+            ok = _make_video(audio_path, cover_path, video_path, loop_path=COVERS_DIR / f"{album.get('id', '')}_loop.mp4")
             if not ok:
                 errors.append(f"{title}: ffmpeg failed to create video")
                 continue
@@ -408,16 +495,7 @@ def _run_upload(album: dict, songs: list[dict]) -> None:
             try:
                 from googleapiclient.http import MediaFileUpload  # noqa: PLC0415
 
-                request_body = {
-                    "snippet": {
-                        "title": title,
-                        "description": f"From album: {album['name']}",
-                        "categoryId": "10",  # Music
-                    },
-                    "status": {
-                        "privacyStatus": "unlisted",
-                    },
-                }
+                request_body = _build_video_metadata(song_id, album, songs)
                 media = MediaFileUpload(str(video_path), chunksize=-1, resumable=True)
                 insert_request = youtube.videos().insert(
                     part="snippet,status",
@@ -442,9 +520,9 @@ def _run_upload(album: dict, songs: list[dict]) -> None:
                 body={
                     "snippet": {
                         "title": album["name"],
-                        "description": f"Uploaded by LoRA Studio",
+                        "description": f'{album["name"]} — full album\n\n#newmusic #originalsong #album',
                     },
-                    "status": {"privacyStatus": "private"},
+                    "status": {"privacyStatus": "public"},
                 },
             ).execute()
             playlist_id = pl_response["id"]
@@ -463,6 +541,48 @@ def _run_upload(album: dict, songs: list[dict]) -> None:
         except Exception as exc:
             errors.append(f"Playlist creation: {exc}")
 
+    # Post-upload: update descriptions with actual video links to recommendations
+    # Post-upload: replace [LINK:id:title] placeholders with actual YouTube URLs
+    if uploaded_songs and len(uploaded_songs) > 1:
+        import re
+        _upload_progress["message"] = "Adding video links to descriptions..."
+        video_map = {sid: vid for sid, vid in uploaded_songs}
+        for sid, vid_id in uploaded_songs:
+            try:
+                vid_resp = youtube.videos().list(part="snippet", id=vid_id).execute()
+                if not vid_resp.get("items"):
+                    continue
+                snippet = vid_resp["items"][0]["snippet"]
+                desc = snippet.get("description", "")
+
+                # Replace [LINK:song_id:title] with actual YouTube URL
+                def replace_link(m):
+                    link_sid = m.group(1)
+                    if link_sid in video_map:
+                        return f"https://www.youtube.com/watch?v={video_map[link_sid]}"
+                    return m.group(0)
+
+                desc = re.sub(r"\[LINK:([^:]+):[^\]]+\]", replace_link, desc)
+
+                # Also add playlist URL if not already there
+                if playlist_url and "playlist?list=" not in desc:
+                    desc = desc.replace("\n#", f"\nFull album: {playlist_url}\n\n#")
+
+                youtube.videos().update(
+                    part="snippet",
+                    body={
+                        "id": vid_id,
+                        "snippet": {
+                            "title": snippet["title"],
+                            "description": desc,
+                            "tags": snippet.get("tags", []),
+                            "categoryId": snippet.get("categoryId", "10"),
+                        },
+                    },
+                ).execute()
+            except Exception as exc:
+                errors.append(f"Link update {_get_song_title(sid)}: {exc}")
+
     # Persist youtube_playlist_id and youtube_videos mapping to library.json
     if uploaded_songs:
         try:
@@ -475,11 +595,17 @@ def _run_upload(album: dict, songs: list[dict]) -> None:
                     for sid, vid in uploaded_songs:
                         video_map[sid] = vid
                     a["youtube_videos"] = video_map
-                    # Store cover hash for change detection in future syncs
+                    # Store cover+loop hash for change detection in future syncs
                     import hashlib as _hl
-                    _cp = _resolve_cover_path(album)
+                    _cp = _resolve_cover_path(album, prefer_wide=True)
+                    _hash = ""
                     if _cp and _cp.exists():
-                        a["youtube_cover_hash"] = _hl.md5(_cp.read_bytes()).hexdigest()
+                        _hash = _hl.md5(_cp.read_bytes()).hexdigest()
+                    _lp = COVERS_DIR / f"{album['id']}_loop.mp4"
+                    if _lp.exists():
+                        _hash += "_" + _hl.md5(_lp.read_bytes()).hexdigest()
+                    if _hash:
+                        a["youtube_cover_hash"] = _hash
                     break
             _save_library(lib)
         except Exception as exc:
@@ -510,18 +636,87 @@ def _get_song_title(song_id: str) -> str:
     if meta_json.exists():
         try:
             meta = json.loads(meta_json.read_text(encoding="utf-8"))
-            inp = meta.get("inputs") or {}
-            return inp.get("title") or song_id
+            return meta.get("title") or song_id
         except Exception:
             pass
     return song_id
 
 
-def _resolve_cover_path(album: dict) -> Path | None:
-    """Return the cover image Path for an album, or None."""
+def _build_video_metadata(song_id: str, album: dict, all_songs: list[dict]) -> dict:
+    """Build YouTube video snippet with clean description, tags, and recommendations."""
+    import random
+
+    meta_json = OUTPUT_DIR / f"{song_id}.inputs.json"
+    song_meta = {}
+    if meta_json.exists():
+        try:
+            song_meta = json.loads(meta_json.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+
+    title = song_meta.get("title", song_id)
+    caption = song_meta.get("caption", "")
+    bpm = song_meta.get("bpm", "")
+    key = song_meta.get("key", "")
+    album_name = album.get("name", "")
+
+    # Pick 2 random other songs for "More from this album" links
+    # Note: actual YouTube URLs will be patched in the post-upload step
+    other_songs = [s for s in all_songs if s["id"] != song_id]
+    recs = random.sample(other_songs, min(2, len(other_songs)))
+    rec_ids = [r["id"] for r in recs]
+
+    # Build description — clean format matching what we settled on
+    description = f'{title} — from the album "{album_name}"\n\n'
+    description += "More from this album:\n"
+    # Placeholder — will be replaced with actual URLs in post-upload step
+    for rid in rec_ids:
+        rec_title = _get_song_title(rid)
+        description += f"[LINK:{rid}:{rec_title}]\n"
+    playlist_id = album.get("youtube_playlist_id", "")
+    if playlist_id:
+        description += f"\nFull album: https://www.youtube.com/playlist?list={playlist_id}\n"
+    description += "\n#newmusic #originalsong #pop #blues #indiemusic"
+
+    # Tags
+    caption_tags = [t.strip() for t in caption.split(",") if t.strip()]
+    genre_tags = [t.strip().lower() for t in caption_tags if any(g in t.strip().lower() for g in ["pop", "rock", "blues", "folk", "jazz", "acoustic", "indie", "soul", "electronic"])]
+    tags = ["new music", "original song", "music video", "lyrics", album_name]
+    tags.extend(genre_tags[:5])
+    tags.extend(["indie music", "new artist", "original music"])
+    if bpm:
+        tags.append(f"{bpm} bpm")
+    if key:
+        tags.append(key)
+    tags = list(dict.fromkeys(tags))[:15]
+
+    return {
+        "snippet": {
+            "title": title,
+            "description": description,
+            "tags": tags,
+            "categoryId": "10",
+        },
+        "status": {
+            "privacyStatus": "public",
+        },
+    }
+
+
+def _resolve_cover_path(album: dict, prefer_wide=False) -> Path | None:
+    """Return the cover image Path for an album, or None.
+
+    If prefer_wide=True, returns the landscape version for video backgrounds.
+    """
+    album_id = album.get("id", "")
+
+    if prefer_wide:
+        wide = COVERS_DIR / f"{album_id}_wide.png"
+        if wide.exists():
+            return wide
+
     album_cover = album.get("cover")
     if album_cover:
-        # Strip query string (cache-buster like ?v=123)
         cover_filename = album_cover.split("/")[-1].split("?")[0]
         candidate = COVERS_DIR / cover_filename
         if candidate.exists():
@@ -557,6 +752,24 @@ async def youtube_sync(album_id: str):
     playlist_id = album.get("youtube_playlist_id")
     if not playlist_id:
         raise HTTPException(status_code=400, detail="Upload to YouTube first")
+
+    # Check if the playlist is accessible on the current channel
+    # If not (e.g. user switched channels), clear old data and redirect to fresh upload
+    try:
+        yt = _build_youtube_service()
+        pl_resp = yt.playlists().list(part="id", id=playlist_id).execute()
+        if not pl_resp.get("items"):
+            raise ValueError("Playlist not found")
+    except Exception:
+        lib = _load_library()
+        for a in lib["albums"]:
+            if a["id"] == album_id:
+                a["youtube_playlist_id"] = ""
+                a["youtube_videos"] = {}
+                a["youtube_cover_hash"] = ""
+                break
+        _save_library(lib)
+        raise HTTPException(status_code=400, detail="Playlist not found on current channel. Use Upload instead — it will create a new playlist.")
 
     youtube_videos = album.get("youtube_videos") or {}
 
@@ -628,7 +841,7 @@ def _run_sync(
         )
         return
 
-    cover_path = _resolve_cover_path(album)
+    cover_path = _resolve_cover_path(album, prefer_wide=True)
 
     # --- 1. Upload new songs ---
     if new_song_ids:
@@ -646,7 +859,7 @@ def _run_sync(
                     continue
 
                 video_path = tmp / f"{sid}.mp4"
-                ok = _make_video(audio_file, cover_path, video_path)
+                ok = _make_video(audio_file, cover_path, video_path, loop_path=COVERS_DIR / f"{album.get('id', '')}_loop.mp4")
                 if not ok:
                     errors.append(f"{title}: ffmpeg failed to create video")
                     continue
@@ -654,14 +867,7 @@ def _run_sync(
                 try:
                     from googleapiclient.http import MediaFileUpload  # noqa: PLC0415
 
-                    request_body = {
-                        "snippet": {
-                            "title": title,
-                            "description": f"From album: {album['name']}",
-                            "categoryId": "10",
-                        },
-                        "status": {"privacyStatus": "unlisted"},
-                    }
+                    request_body = _build_video_metadata(sid, album, songs)
                     media = MediaFileUpload(str(video_path), chunksize=-1, resumable=True)
                     insert_req = youtube.videos().insert(
                         part="snippet,status",
@@ -760,12 +966,16 @@ def _run_sync(
             except Exception as exc:
                 errors.append(f"Rename {local_title}: {exc}")
 
-    # --- 4. Re-upload videos if album cover changed ---
-    cover_path = _resolve_cover_path(album)
+    # --- 4. Re-upload videos if album cover or video loop changed ---
+    cover_path = _resolve_cover_path(album, prefer_wide=True)
     import hashlib
     current_cover_hash = ""
     if cover_path and cover_path.exists():
         current_cover_hash = hashlib.md5(cover_path.read_bytes()).hexdigest()
+    # Also hash the video loop if it exists
+    loop_path = COVERS_DIR / f"{album.get('id', '')}_loop.mp4"
+    if loop_path.exists():
+        current_cover_hash += "_" + hashlib.md5(loop_path.read_bytes()).hexdigest()
     stored_cover_hash = album.get("youtube_cover_hash", "")
 
     cover_changed = current_cover_hash and current_cover_hash != stored_cover_hash
@@ -793,24 +1003,17 @@ def _run_sync(
 
                 # Create new video with updated cover
                 video_path = tmp / f"{sid}.mp4"
-                ok = _make_video(audio_file, cover_path, video_path)
+                ok = _make_video(audio_file, cover_path, video_path, loop_path=COVERS_DIR / f"{album.get('id', '')}_loop.mp4")
                 if not ok:
                     errors.append(f"Re-upload {title}: ffmpeg failed")
                     continue
 
                 try:
-                    # Upload new video
+                    # Upload new video with SEO metadata
                     media = _MFU(str(video_path), chunksize=-1, resumable=True)
                     insert_req = youtube.videos().insert(
                         part="snippet,status",
-                        body={
-                            "snippet": {
-                                "title": title,
-                                "description": f"From album: {album['name']}",
-                                "categoryId": "10",
-                            },
-                            "status": {"privacyStatus": "unlisted"},
-                        },
+                        body=_build_video_metadata(sid, album, songs),
                         media_body=media,
                     )
                     resp = None

@@ -2,13 +2,14 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   getLibrary, getSongs, deleteAlbum, removeSongFromAlbum, updateAlbum,
-  getYoutubeAuthUrl, getYoutubeAuthStatus,
+  getYoutubeAuthUrl, getYoutubeAuthStatus, getYoutubeChannels, selectYoutubeChannel,
   youtubeUploadAlbum, youtubeUploadStatusSSE,
   youtubeSyncAlbum, youtubeSyncStatusSSE,
 } from '../api.js';
 import SongTable from './SongTable.jsx';
 import SongEditor from './SongEditor.jsx';
 import CoverModal from './CoverModal.jsx';
+import VideoLoopModal from './VideoLoopModal.jsx';
 import { playSong } from './NowPlaying.jsx';
 
 const C = {
@@ -39,6 +40,9 @@ function YoutubeUploadPanel({ albumId, onToast, triggerOpen, onTriggerClose, has
   const [uploading, setUploading] = useState(false);
   const [progress, setProgress] = useState(null);
   const sseRef = useRef(null);
+  const [channels, setChannels] = useState([]);
+  const [selectedChannel, setSelectedChannel] = useState('');
+  const [loadingChannels, setLoadingChannels] = useState(false);
 
   const stopSSE = () => {
     if (sseRef.current) { sseRef.current.close(); sseRef.current = null; }
@@ -74,7 +78,19 @@ function YoutubeUploadPanel({ albumId, onToast, triggerOpen, onTriggerClose, has
     setAuthStatus('checking');
     try {
       const res = await getYoutubeAuthStatus();
-      setAuthStatus(res.authenticated ? 'authed' : 'unauthed');
+      if (res.authenticated) {
+        setAuthStatus('authed');
+        // Load channels
+        setLoadingChannels(true);
+        try {
+          const chRes = await getYoutubeChannels();
+          setChannels(chRes.channels || []);
+          setSelectedChannel(chRes.selected || (chRes.channels?.[0]?.id) || '');
+        } catch {}
+        setLoadingChannels(false);
+      } else {
+        setAuthStatus('unauthed');
+      }
     } catch {
       setAuthStatus('unavailable');
     }
@@ -218,12 +234,48 @@ function YoutubeUploadPanel({ albumId, onToast, triggerOpen, onTriggerClose, has
 
         {authStatus === 'authed' && !uploading && !progress && (
           <div>
+            {/* Channel picker */}
+            {channels.length > 0 && (
+              <div style={{ marginBottom: 16 }}>
+                <label style={{ display: 'block', fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.08em', color: '#666', marginBottom: 6, fontWeight: 600 }}>
+                  Upload to channel
+                </label>
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                  {channels.map((ch) => (
+                    <button
+                      key={ch.id}
+                      onClick={async () => {
+                        setSelectedChannel(ch.id);
+                        await selectYoutubeChannel(ch.id);
+                      }}
+                      style={{
+                        display: 'flex', alignItems: 'center', gap: 8,
+                        padding: '8px 14px', borderRadius: 10, cursor: 'pointer',
+                        background: selectedChannel === ch.id ? 'rgba(255,0,0,0.1)' : '#333',
+                        border: selectedChannel === ch.id ? '1px solid rgba(255,0,0,0.4)' : '1px solid #444',
+                        color: selectedChannel === ch.id ? '#fff' : '#a7a7a7',
+                        transition: 'all 0.15s',
+                      }}
+                    >
+                      {ch.thumbnail && (
+                        <img src={ch.thumbnail} alt="" style={{ width: 24, height: 24, borderRadius: '50%' }} />
+                      )}
+                      <span style={{ fontSize: 13, fontWeight: 500 }}>{ch.title}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+            {loadingChannels && (
+              <div style={{ color: '#a7a7a7', fontSize: 13, marginBottom: 12 }}>Loading channels...</div>
+            )}
+
             <p style={{ color: '#a7a7a7', fontSize: 14, marginBottom: 16 }}>
               {isSync
                 ? 'Sync will upload new songs, remove deleted ones, update renamed titles, and reorder the playlist to match your album.'
                 : 'Each song will be uploaded as an unlisted video (cover art + audio). A private playlist will be created for the album.'}
             </p>
-            <div style={{ display: 'flex', gap: 12 }}>
+            <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
               <button className="btn btn-primary" onClick={handleUpload}>
                 {isSync ? 'Start Sync' : 'Start Upload'}
               </button>
@@ -232,6 +284,17 @@ function YoutubeUploadPanel({ albumId, onToast, triggerOpen, onTriggerClose, has
                 onClick={checkAuth}
               >
                 Re-check auth
+              </button>
+              <button
+                style={{ fontSize: 13, color: '#e91429', background: 'none', border: 'none', cursor: 'pointer', marginLeft: 'auto' }}
+                onClick={async () => {
+                  await fetch('/api/youtube/logout', { method: 'POST' }).catch(() => {});
+                  setAuthStatus('unauthed');
+                  setChannels([]);
+                  onToast('Signed out from YouTube');
+                }}
+              >
+                Sign out
               </button>
             </div>
           </div>
@@ -299,6 +362,7 @@ export default function AlbumDetail({ albumId, onToast, onBack }) {
   const [songs, setSongs] = useState([]);
   const [loading, setLoading] = useState(true);
   const [coverModalOpen, setCoverModalOpen] = useState(false);
+  const [videoLoopOpen, setVideoLoopOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [ytUploadOpen, setYtUploadOpen] = useState(false);
   const [editSong, setEditSong] = useState(null);
@@ -475,6 +539,16 @@ export default function AlbumDetail({ albumId, onToast, onBack }) {
                 >
                   🎨 Generate Cover
                 </div>
+                {album.cover && (
+                  <div
+                    onClick={() => { setVideoLoopOpen(true); setMenuOpen(false); }}
+                    style={{ padding: '12px 16px', fontSize: 14, color: '#fff', cursor: 'pointer' }}
+                    onMouseEnter={e => e.currentTarget.style.background = '#3a3a3a'}
+                    onMouseLeave={e => e.currentTarget.style.background = ''}
+                  >
+                    🎬 Generate Video Loop
+                  </div>
+                )}
                 <div
                   onClick={() => { setMenuOpen(false); setYtUploadOpen(true); }}
                   style={{ padding: '12px 16px', fontSize: 14, color: '#fff', cursor: 'pointer' }}
@@ -546,6 +620,15 @@ export default function AlbumDetail({ albumId, onToast, onBack }) {
         onClose={() => setCoverModalOpen(false)}
         onToast={onToast}
         onDone={load}
+        existingPrompt={album?.cover_prompt || ''}
+      />
+      <VideoLoopModal
+        albumId={albumId}
+        open={videoLoopOpen}
+        onClose={() => setVideoLoopOpen(false)}
+        onToast={onToast}
+        onDone={load}
+        existingLoopUrl={album?.video_loop || ''}
       />
       <YoutubeUploadPanel
         albumId={albumId}

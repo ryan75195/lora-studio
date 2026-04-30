@@ -42,6 +42,9 @@ _DEFAULT_CONFIG = {
     },
     "api_keys": {
         "openai_api_key": "",
+        "gemini_api_key": "",
+        "kling_access_key": "",
+        "kling_secret_key": "",
         "google_client_id": "",
         "google_client_secret": "",
     },
@@ -102,7 +105,7 @@ def reload_config():
 
     Called after the setup wizard saves new settings.
     """
-    global OPENAI_API_KEY, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET
+    global OPENAI_API_KEY, GEMINI_API_KEY, KLING_ACCESS_KEY, KLING_SECRET_KEY, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET
     global PROJECT_ROOT, DATA_DIR, LORA_DIR, OUTPUT_DIR, CHECKPOINT_DIR
     global DRAFT_DIR, LIBRARY_PATH, COVERS_DIR
     global SERVER_HOST, SERVER_PORT
@@ -112,6 +115,9 @@ def reload_config():
     # API keys: config.json > .env > empty
     keys = cfg.get("api_keys", {})
     OPENAI_API_KEY = keys.get("openai_api_key") or os.environ.get("OPENAI_API_KEY", "")
+    GEMINI_API_KEY = keys.get("gemini_api_key") or os.environ.get("GEMINI_API_KEY", "")
+    KLING_ACCESS_KEY = keys.get("kling_access_key") or os.environ.get("KLING_ACCESS_KEY", "")
+    KLING_SECRET_KEY = keys.get("kling_secret_key") or os.environ.get("KLING_SECRET_KEY", "")
     GOOGLE_CLIENT_ID = keys.get("google_client_id") or os.environ.get("GOOGLE_CLIENT_ID", "")
     GOOGLE_CLIENT_SECRET = keys.get("google_client_secret") or os.environ.get("GOOGLE_CLIENT_SECRET", "")
 
@@ -157,6 +163,9 @@ if not _CONFIG_PATH.exists():
 
 # Placeholders so the module always exposes every name
 OPENAI_API_KEY: str = ""
+GEMINI_API_KEY: str = ""
+KLING_ACCESS_KEY: str = ""
+KLING_SECRET_KEY: str = ""
 GOOGLE_CLIENT_ID: str = ""
 GOOGLE_CLIENT_SECRET: str = ""
 PROJECT_ROOT: Path = _HERE.parent.resolve()

@@ -1,0 +1,109 @@
+name: Build & Release
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'lora-studio/**'
+      - 'start.bat'
+      - 'requirements.txt'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Build frontend
+        working-directory: lora-studio/frontend
+        run: |
+          npm ci
+          npx vite build
+
+      - name: Get version info
+        id: version
+        run: |
+          SHORT_SHA=$(git rev-parse --short HEAD)
+          DATE=$(date +'%Y%m%d')
+          echo "tag=v${DATE}-${SHORT_SHA}" >> $GITHUB_OUTPUT
+          echo "name=LoRA Studio ${DATE}" >> $GITHUB_OUTPUT
+          # Get commit messages since last tag
+          LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+          if [ -n "$LAST_TAG" ]; then
+            CHANGES=$(git log ${LAST_TAG}..HEAD --oneline --no-merges -- lora-studio/ start.bat requirements.txt | head -20)
+          else
+            CHANGES=$(git log --oneline --no-merges -10 -- lora-studio/ start.bat requirements.txt)
+          fi
+          echo "changes<<EOF" >> $GITHUB_OUTPUT
+          echo "$CHANGES" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Package release
+        run: |
+          mkdir -p dist/ACE-Step-1.5
+
+          # Copy ACE-Step core
+          cp -r acestep dist/ACE-Step-1.5/
+          cp requirements.txt dist/ACE-Step-1.5/
+          cp *.py dist/ACE-Step-1.5/ 2>/dev/null || true
+          cp *.md dist/ACE-Step-1.5/ 2>/dev/null || true
+          cp LICENSE* dist/ACE-Step-1.5/ 2>/dev/null || true
+
+          # Copy LoRA Studio
+          mkdir -p dist/ACE-Step-1.5/lora-studio
+          cp -r lora-studio/routes dist/ACE-Step-1.5/lora-studio/
+          cp -r lora-studio/services dist/ACE-Step-1.5/lora-studio/
+          cp -r lora-studio/server.py dist/ACE-Step-1.5/lora-studio/
+          cp -r lora-studio/static-build dist/ACE-Step-1.5/lora-studio/
+          cp -r lora-studio/static dist/ACE-Step-1.5/lora-studio/ 2>/dev/null || true
+          cp -r lora-studio/frontend dist/ACE-Step-1.5/lora-studio/
+          echo '{}' > dist/ACE-Step-1.5/lora-studio/config.json
+
+          # Copy launcher
+          cp start.bat dist/ACE-Step-1.5/
+
+          # Create data directories
+          mkdir -p dist/ACE-Step-1.5/data/{artists,drafts,covers,queue}
+          mkdir -p dist/ACE-Step-1.5/acestep_output
+          mkdir -p dist/ACE-Step-1.5/lora-output
+
+          # Package (exclude large/generated files)
+          cd dist
+          zip -r lora-studio-release.zip ACE-Step-1.5/ \
+            -x "ACE-Step-1.5/lora-studio/frontend/node_modules/*" \
+            -x "ACE-Step-1.5/**/__pycache__/*" \
+            -x "ACE-Step-1.5/checkpoints/*" \
+            -x "ACE-Step-1.5/.git/*"
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: ${{ steps.version.outputs.name }}
+          body: |
+            ## LoRA Studio Release
+
+            ### Setup
+            1. Extract the zip
+            2. Install [Python 3.10+](https://python.org) and [CUDA toolkit](https://developer.nvidia.com/cuda-downloads)
+            3. Run `start.bat` (Windows) or `python lora-studio/server.py` (Linux/Mac)
+            4. Open http://localhost:8888 — the setup wizard will guide you through API keys and model download
+
+            ### Requirements
+            - NVIDIA GPU with 8GB+ VRAM (16GB recommended)
+            - Python 3.10+
+            - ~10GB disk space for models (downloaded on first run)
+
+            ### Changes
+            ${{ steps.version.outputs.changes }}
+          files: dist/lora-studio-release.zip
+          draft: false
+          prerelease: false

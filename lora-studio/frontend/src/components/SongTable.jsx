@@ -63,7 +63,7 @@ function IconGrip() {
 /* ------------------------------------------------------------------ */
 /*  Context menu                                                       */
 /* ------------------------------------------------------------------ */
-function SongMenu({ song, albums, onPlay, onViewDetails, onReuseSettings, onEditRegenerate, onAddToAlbum, onRemoveFromAlbum, onRemoveFromFavourites, onAddToFavourites, onClose, isMobile }) {
+function SongMenu({ song, albums, onPlay, onViewDetails, onReuseSettings, onMakeMore, onEditRegenerate, onAddToAlbum, onRemoveFromAlbum, onRemoveFromFavourites, onAddToFavourites, onClose, isMobile }) {
   const ref = useRef(null);
   const menuNavigate = useNavigate();
   const [view, setView] = useState('main'); // 'main' | 'strip' | 'album' | 'confirmDelete'
@@ -182,6 +182,7 @@ function SongMenu({ song, albums, onPlay, onViewDetails, onReuseSettings, onEdit
           <Item icon="&#9776;" label="View Details" onClick={() => { onViewDetails(song); onClose(); }} />
           {onEditRegenerate && <Item icon="&#9998;" label="Edit & Regenerate" onClick={() => { onEditRegenerate(song); onClose(); }} />}
           {song.inputs && onReuseSettings && <Item icon="&#8634;" label="Reuse Settings" color="#a7a7a7" onClick={() => { onReuseSettings(song); onClose(); }} />}
+          {song.inputs && onMakeMore && <Item icon="&#10024;" label="Make More Like This" sub="New song, same vibe" color="#1ed760" onClick={() => { onMakeMore(song); onClose(); }} />}
 
           <Divider />
 
@@ -397,7 +398,7 @@ function Tag({ label, value }) {
 /* ------------------------------------------------------------------ */
 /*  Main SongTable                                                     */
 /* ------------------------------------------------------------------ */
-export default function SongTable({ songs, albums, onReuseSettings, onEditRegenerate, onAddToAlbum, onRemoveFromAlbum, onRemoveFromFavourites, onAddToFavourites, activeSongId, coverUrl, onReorder, favouriteIds = [], selectionMode = false, batchActions = [], showPlayControls = true }) {
+export default function SongTable({ songs, albums, onReuseSettings, onMakeMore, onEditRegenerate, onAddToAlbum, onRemoveFromAlbum, onRemoveFromFavourites, onAddToFavourites, activeSongId, coverUrl, onReorder, favouriteIds = [], selectionMode = false, batchActions = [], showPlayControls = true }) {
   const [openMenuId, setOpenMenuId] = useState(null);
   const [detailSong, setDetailSong] = useState(null);
   const [hoveredId, setHoveredId] = useState(null);
@@ -905,6 +906,7 @@ export default function SongTable({ songs, albums, onReuseSettings, onEditRegene
                       onPlay={handlePlay}
                       onViewDetails={setDetailSong}
                       onReuseSettings={onReuseSettings}
+                      onMakeMore={onMakeMore}
                       onEditRegenerate={onEditRegenerate}
                       onAddToAlbum={onAddToAlbum}
                       onRemoveFromAlbum={onRemoveFromAlbum ? (id) => onRemoveFromAlbum(id) : null}

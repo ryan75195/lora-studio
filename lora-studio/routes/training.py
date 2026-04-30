@@ -4,6 +4,7 @@ import sys
 import os
 import json
 import asyncio
+import logging
 import threading
 from datetime import datetime
 from pathlib import Path
@@ -17,10 +18,12 @@ from services.config import DATA_DIR, LORA_DIR, CHECKPOINT_DIR, PROJECT_ROOT
 # Pending training request file (for auto-resume after restart)
 _PENDING_TRAIN_FILE = DATA_DIR.parent / "pending_train.json"
 
+logger = logging.getLogger("lora-studio.training")
 router = APIRouter()
 
 # --- Training state (module-level singleton) ---
 train_progress = {"active": False, "message": "", "step": 0, "total": 0, "error": None}
+_training_state: dict | None = None  # Reference to the training loop's control dict
 
 
 # --- Models ---
@@ -147,9 +150,55 @@ async def start_training(body: TrainRequest):
                         sample.language = cached.get('language', '')
                         sample.is_labeled = True
                         sample.labeled = True
+                        # Mark as non-instrumental if lyrics exist and aren't just [Instrumental]
+                        lyrics_text = (sample.lyrics or '').strip()
+                        if lyrics_text and lyrics_text != '[Instrumental]':
+                            sample.is_instrumental = False
                         cached_count += 1
                     except Exception:
                         pass
+
+            # Transcribe tracks missing lyrics (Whisper) + detect key (librosa)
+            needs_transcription = sum(1 for s in all_samples if (getattr(s, 'lyrics', '') or '').strip() in ('', '[Instrumental]') or not getattr(s, 'key', ''))
+            if needs_transcription > 0:
+                train_progress.update({
+                    "phase": "labeling", "message": f"Transcribing {needs_transcription} tracks with Whisper...",
+                    "phase_progress": 0, "phase_total": needs_transcription,
+                })
+                from services.transcribe import transcribe_artist_tracks
+                transcribe_count = 0
+                for audio_dir in audio_dirs:
+                    def _transcribe_progress(msg):
+                        train_progress["message"] = msg
+                        nonlocal transcribe_count
+                        import re as _re
+                        m = _re.search(r'(\d+)/', msg)
+                        if m:
+                            train_progress["phase_progress"] = transcribe_count + int(m.group(1))
+                    updated, _ = transcribe_artist_tracks(audio_dir, progress_callback=_transcribe_progress)
+                    transcribe_count += updated
+
+                # Reload labels from updated cache files
+                cached_count = 0
+                for sample in all_samples:
+                    cache_file = Path(sample.audio_path).with_suffix('.labels.json')
+                    if cache_file.exists():
+                        try:
+                            cached = json.loads(cache_file.read_text(encoding='utf-8'))
+                            sample.caption = cached.get('caption', '')
+                            sample.lyrics = cached.get('lyrics', '')
+                            sample.bpm = cached.get('bpm')
+                            sample.key = cached.get('key', '')
+                            sample.duration = cached.get('duration')
+                            sample.language = cached.get('language', '')
+                            sample.is_labeled = True
+                            sample.labeled = True
+                            lyrics_text = (sample.lyrics or '').strip()
+                            if lyrics_text and lyrics_text != '[Instrumental]':
+                                sample.is_instrumental = False
+                            cached_count += 1
+                        except Exception:
+                            pass
 
             needs_labeling = track_count - cached_count
             train_progress.update({"phase": "loading", "message": f"Loading model... ({cached_count} cached labels)"})
@@ -294,7 +343,9 @@ async def start_training(body: TrainRequest):
                 persistent_workers=False, pin_memory_device="cuda",
                 log_every_n_steps=1,
             )
+            global _training_state
             training_state = {"is_training": True, "should_stop": False}
+            _training_state = training_state
             trainer = LoRATrainer(
                 dit_handler=handler,
                 lora_config=lora_config,
@@ -349,11 +400,14 @@ async def start_training(body: TrainRequest):
             train_progress["error"] = str(e)
             train_progress["message"] = f"Error: {e}"
             train_progress["active"] = False
+            logger.error(f"training FAILED | {name}: {e}", exc_info=True)
         finally:
+            _training_state = None
             release_gpu()
             # Clear pending file — training finished (success or error)
             if _PENDING_TRAIN_FILE.exists():
                 _PENDING_TRAIN_FILE.unlink(missing_ok=True)
+            logger.info(f"training END | {name} | step={train_progress.get('step', 0)}/{train_progress.get('total', 0)}")
 
     thread = threading.Thread(target=run_training, daemon=True)
     thread.start()
@@ -383,6 +437,26 @@ async def gpu_status():
     from services.gpu_lock import gpu_owner
     owner = gpu_owner()
     return {"locked": bool(owner), "owner": owner}
+
+
+@router.post("/api/train/cancel")
+async def cancel_training():
+    """Stop the current training run. Progress is saved — training can be resumed later."""
+    global _training_state
+    if not train_progress["active"]:
+        raise HTTPException(status_code=409, detail="No training in progress")
+
+    if _training_state is not None:
+        _training_state["should_stop"] = True
+        logger.info("training CANCEL requested — will stop after current step")
+        train_progress["message"] = "Cancelling — saving checkpoint..."
+        return {"status": "cancelling", "message": "Training will stop after the current step. Progress is saved."}
+
+    # Fallback: training is active but we don't have the state ref (e.g. in labeling phase)
+    train_progress["active"] = False
+    train_progress["message"] = "Cancelled"
+    logger.info("training CANCEL — forced (no training state ref, likely in labeling/preprocessing)")
+    return {"status": "cancelled", "message": "Training cancelled. Resume from checkpoint when ready."}
 
 
 def resume_training_if_pending():

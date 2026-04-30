@@ -38,6 +38,31 @@ function ModelLoadingScreen({ message }) {
   );
 }
 
+function RvcDemo() {
+  const tracks = [
+    { id: 'original', label: 'ORIGINAL', title: 'Last Dance Home — Full Song', desc: 'Original ACE-Step generation', green: false },
+    { id: 'vocals-before', label: 'EXTRACTED', title: 'Vocals Only (before conversion)', desc: 'Demucs-separated vocals', green: false },
+    { id: 'vocals-after-v1', label: 'V1 (98 epochs)', title: 'Vocals — First Attempt', desc: '98 epochs, 11 tracks — barely trained', green: false },
+    { id: 'vocals-after', label: 'V2 (800 epochs)', title: 'Vocals — Proper Training', desc: '800 epochs, 24 tracks, GPU trained', green: true },
+    { id: 'final-v1', label: 'V1 FINAL MIX', title: 'V1 Mix (98 epochs)', desc: 'First attempt remixed', green: false },
+    { id: 'final', label: 'V2 FINAL MIX', title: 'V2 Mix (800 epochs)', desc: 'Proper training remixed', green: true },
+  ];
+  return (
+    <div style={{ maxWidth: 700, margin: '0 auto' }}>
+      <h1 style={{ color: '#1ed760', fontSize: 24, marginBottom: 8 }}>RVC Voice Conversion PoC</h1>
+      <p style={{ color: '#888', fontSize: 13, marginBottom: 24 }}>Clapton voice model. Compare original vs converted vocals.</p>
+      {tracks.map(t => (
+        <div key={t.id} style={{ background: '#1a1a1a', borderRadius: 16, padding: 16, marginBottom: 12 }}>
+          <span style={{ display: 'inline-block', padding: '3px 10px', borderRadius: 10, fontSize: 11, fontWeight: 600, marginBottom: 8, background: t.green ? 'rgba(30,215,96,0.15)' : 'rgba(255,255,255,0.1)', color: t.green ? '#1ed760' : '#888' }}>{t.label}</span>
+          <div style={{ fontSize: 15, fontWeight: 600, color: '#fff', marginBottom: 4 }}>{t.title}</div>
+          <div style={{ fontSize: 12, color: '#666', marginBottom: 10 }}>{t.desc}</div>
+          <audio controls preload="none" src={`/api/rvc-poc/${t.id}`} style={{ width: '100%', height: 40 }} />
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function SetupGate({ children }) {
   const navigate = useNavigate();
   const location = useLocation();
@@ -117,6 +142,7 @@ function AppLayout() {
           <Route path="/generate" element={<Generate onToast={showToast} />} />
           <Route path="/generate/review/:draftId" element={<Generate onToast={showToast} />} />
           <Route path="/library" element={<Library onToast={showToast} />} />
+          {/* RVC demo shelved */}
           <Route path="/setup" element={<Setup />} />
           <Route path="*" element={<Navigate to="/artists" replace />} />
         </Routes>

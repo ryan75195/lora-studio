@@ -1,6 +1,7 @@
 """Generation routes: queue-based generation, drafts CRUD, repaint, open-folder."""
 
 import json
+import logging
 import re
 import shutil
 import threading
@@ -17,6 +18,7 @@ from services.config import DRAFT_DIR, OUTPUT_DIR, LORA_DIR
 from services import models as _models
 import services.queue as _queue
 
+logger = logging.getLogger("lora-studio.generation")
 router = APIRouter()
 
 # --- Generation status for repaint (module-level singleton) ---
@@ -65,6 +67,7 @@ class SongRepaintRequest(BaseModel):
 @router.post("/api/generate")
 async def generate_song(body: GenerateRequest):
     """Add a generation job to the queue. Returns job_id and queue position."""
+    logger.info(f"generate | title={body.title!r} lora={body.lora_name or 'base'} bpm={body.bpm} key={body.key} dur={body.duration}s")
     try:
         from services.telemetry import log_event
         log_event("generate", {"title": body.title, "lora": body.lora_name, "bpm": body.bpm, "key": body.key, "duration": body.duration})

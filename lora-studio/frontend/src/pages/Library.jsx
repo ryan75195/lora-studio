@@ -333,6 +333,20 @@ function LibraryMain({ onToast, onAlbumClick }) {
                         window.dispatchEvent(new CustomEvent('lora-studio:reuse-settings', { detail: s.inputs }));
                         navigate('/generate');
                       }}
+                      onMakeMore={(s) => {
+                        const inp = s.inputs || {};
+                        sessionStorage.setItem('lora-studio:make-more', JSON.stringify({
+                          title: inp.title || '',
+                          caption: inp.caption || '',
+                          lyrics: inp.lyrics || '',
+                          bpm: inp.bpm || null,
+                          key: inp.key || '',
+                          duration: inp.duration || 180,
+                          lora_name: inp.lora_name || '',
+                          strength: inp.strength || 1.6,
+                        }));
+                        navigate('/generate');
+                      }}
                       onEditRegenerate={(song) => setEditSong(song)}
                       onAddToAlbum={async (albumId, songId) => {
                         await addSongToAlbum(albumId, songId);
@@ -433,6 +447,19 @@ function LibraryMain({ onToast, onAlbumClick }) {
                     }}
                     onReuseSettings={(s) => {
                       window.dispatchEvent(new CustomEvent('lora-studio:reuse-settings', { detail: s.inputs }));
+                      navigate('/generate');
+                    }}
+                    onMakeMore={(s) => {
+                      const inp = s.inputs || {};
+                      sessionStorage.setItem('lora-studio:make-more', JSON.stringify({
+                        title: inp.title || '',
+                        caption: inp.caption || '',
+                        bpm: inp.bpm || null,
+                        key: inp.key || '',
+                        duration: inp.duration || 180,
+                        lora_name: inp.lora_name || '',
+                        strength: inp.strength || 1.6,
+                      }));
                       navigate('/generate');
                     }}
                     onEditRegenerate={(song) => setEditSong(song)}
