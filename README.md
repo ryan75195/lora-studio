@@ -17,6 +17,30 @@ LoRA Studio is a music production app that runs on your PC. You describe a song 
 
 ---
 
+## Screenshots
+
+**Create — describe a song, the AI plans it**
+
+![Create page](docs/images/create.png)
+
+**Artists — voice models you've trained**
+
+![Artists page](docs/images/artists.png)
+
+**Train — mix one or more artists into a LoRA**
+
+![Train page](docs/images/train.png)
+
+**Library — your generated songs and albums**
+
+![Library page](docs/images/library.png)
+
+**First-run setup wizard — API keys and model download**
+
+![Setup wizard](docs/images/setup.png)
+
+---
+
 ## What you need
 
 | Thing | Why | How to get it |
@@ -191,3 +215,31 @@ In the `acestep_output` folder inside the app directory. They're regular MP3 fil
 
 **Can multiple people use it at once?**
 Yes — anyone on the same WiFi can open the app in their browser. But only one song generates at a time (they queue up).
+
+---
+
+## Credits
+
+LoRA Studio is built on a lot of excellent open-source work. The big ones:
+
+### Built on
+- **[ACE-Step](https://github.com/ace-step/ACE-Step)** — the music generation model and inference pipeline. Everything under `acestep/` is built on the ACE-Step codebase.
+- **[nano-vllm](https://github.com/GeeeekExplorer/nano-vllm)** by Xingkai Yu (MIT) — vendored at `acestep/third_parts/nano-vllm/` for fast LLM inference.
+
+### ML / audio
+- **[PyTorch](https://pytorch.org/)** + **[Lightning](https://lightning.ai/)** — model framework and training loop
+- Hugging Face: **[Transformers](https://github.com/huggingface/transformers)**, **[Diffusers](https://github.com/huggingface/diffusers)**, **[PEFT](https://github.com/huggingface/peft)**, **[Accelerate](https://github.com/huggingface/accelerate)**
+- **[Demucs](https://github.com/facebookresearch/demucs)** by Meta — vocal/instrumental separation
+- **[OpenAI Whisper](https://github.com/openai/whisper)** — lyric transcription
+- **[LyCORIS](https://github.com/KohakuBlueleaf/LyCORIS)** — extended LoRA training
+- **[librosa](https://librosa.org/)** — audio analysis (key/BPM detection)
+
+### Web stack
+- **[FastAPI](https://fastapi.tiangolo.com/)** + **[Uvicorn](https://www.uvicorn.org/)** — backend
+- **[React](https://react.dev/)** + **[Vite](https://vitejs.dev/)** + **[Tailwind CSS](https://tailwindcss.com/)** + **[shadcn/ui](https://ui.shadcn.com/)** — frontend
+
+### Third-party APIs (optional)
+- **[OpenAI](https://openai.com/)** — GPT for the song builder, lyric writing, and cover art generation
+- **[Kling AI](https://klingai.com/)** — image-to-video for animated cover loops
+
+License headers and full attribution for each vendored dependency live alongside the code (e.g. `acestep/third_parts/nano-vllm/LICENSE`).
