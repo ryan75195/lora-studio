@@ -1,6 +1,6 @@
 # LoRA Studio
 
-**Make your own music with AI.** Generate songs, train custom voice models, edit tracks, and upload to YouTube — all from your browser.
+**Make your own music with AI.** Generate songs, train custom voice models from audio you own or have permission to use, edit tracks, and export them from your browser.
 
 ---
 
@@ -9,10 +9,10 @@
 LoRA Studio is a music production app that runs on your PC. You describe a song idea (like "a chill jazz track to fall asleep to") and AI generates the full song — vocals, instruments, everything. You can:
 
 - **Generate songs** from text descriptions
-- **Train voice models** on your favourite artists (download their music from YouTube, train a model, generate songs in their style)
+- **Train voice models** from your own recordings or properly licensed audio datasets
 - **Edit songs** — repaint sections, strip vocals/instruments, remix
 - **Create albums** automatically from a theme
-- **Upload to YouTube** with one click
+- **Export finished tracks** for publishing on platforms where you have the required rights
 - **Control everything from your phone** (works on any device on your WiFi)
 
 ---
@@ -27,7 +27,7 @@ LoRA Studio is a music production app that runs on your PC. You describe a song 
 
 ![Artists page](docs/images/artists.png)
 
-**Train — mix one or more artists into a LoRA**
+**Train — build a custom voice LoRA**
 
 ![Train page](docs/images/train.png)
 
@@ -132,24 +132,22 @@ The setup wizard will check if the AI models are downloaded. If not, it'll offer
 6. Listen to your song!
 
 ### Train a voice model (LoRA)
-Want songs that sound like a specific artist? Train a model:
+Want a consistent vocal style for your own projects? Train a model from recordings you own or have permission to use:
 
 1. Go to the **Artists** tab
 2. Click **+ New Artist**
-3. Give it a name (like "my-artist")
-4. Click **Import from YouTube** and paste a YouTube playlist URL with their songs
+3. Give it a name (like "my-voice")
+4. Import audio from a source you own or are licensed to use
 5. Wait for the download to finish
 6. Go to the **Train** tab
 7. Select the artist and click **Train LoRA**
 8. Wait 30-60 minutes
 9. Now when you generate songs, select your trained model from the dropdown!
 
-### Upload to YouTube
+### Publish your music
 1. Go to your album in the **Library** tab
-2. Click the **...** menu → **Upload to YouTube**
-3. Click **Sign in with Google** (first time only)
-4. Click **Start Upload**
-5. Done — your songs are on YouTube!
+2. Export the finished tracks
+3. Publish them only on platforms where you have the rights to the composition, vocals, samples, and generated output
 
 ---
 
@@ -183,9 +181,9 @@ You didn't check "Add Python to PATH" during install. Reinstall Python and make 
 ### "Waiting for models..."
 The AI models take 30-60 seconds to load when you first generate a song. This is normal.
 
-### YouTube upload fails
-- Make sure you've signed in with Google first
-- Your Google account needs to have a YouTube channel
+### Publishing fails
+- Check the export completed successfully
+- Check the requirements of the platform you are publishing to
 
 ### App is slow on my phone
 The app runs on your PC — your phone is just a remote control. If it's slow, your PC might be busy generating a song. Only one song generates at a time.
@@ -200,7 +198,7 @@ The app itself is free. You need an OpenAI API key which costs a few cents per s
 **Does it use the internet?**
 - The AI song builder (GPT) needs internet
 - Music generation runs 100% locally on your GPU
-- YouTube upload needs internet
+- Publishing or sharing tracks online needs internet
 
 **Can I use it offline?**
 Yes, for music generation. Just skip the AI chat and fill in the caption/lyrics manually.
